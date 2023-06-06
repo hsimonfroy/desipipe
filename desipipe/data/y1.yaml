@@ -1,0 +1,20 @@
+description: Cutsky Y1 First Generation fiber assigned data and randoms catalogs.
+id: Y1CutSkyFirstGenCatalog
+filetype: catalog
+path: ${DESICFS}/survey/catalogs/main/mocks/FirstGenMocks/AbacusSummit/Y1v1/mock{imock:d}/LSScats/{tracer}_{region}_clustering.{field}.fits
+options:
+  field: ['data', 'randoms']
+  imock: range(0, 25, 1)
+  tracer: ['LRG', 'ELG', 'QSO']
+  region: ['N', 'S']
+
+---
+
+description: Power spectra of cutsky Y1 First Generation fiber assigned data and randoms catalogs.
+id: Y1CutSkyFirstGenPower
+filetype: power
+path: ${SCRATCH}/mock{imock:d}/{tracer}_{region}_clustering.{field}.fits
+options:
+  imock: range(0, 25, 1)
+  tracer: ['LRG', 'ELG', 'QSO']
+  region: ['N', 'S']
