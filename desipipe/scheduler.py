@@ -19,9 +19,7 @@ class BaseScheduler(BaseClass, metaclass=RegisteredScheduler):
     _defaults = dict()
 
     def __init__(self, provider=None, **kwargs):
-        self.__dict__.update(self._defaults)
-        self.provider = provider
-        self.update(**kwargs)
+        self.update(**{'provider': provider, **self._defaults, **kwargs})
 
     def update(self, **kwargs):
         if 'provider' in kwargs:

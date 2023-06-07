@@ -3,12 +3,7 @@
 **desipipe** is an attempt to provide a common framework for running DESI clustering analyses,
 handling files, submitting jobs, etc. within Python alone.
 
-
 Example notebooks presenting most use cases are provided in directory nb/.
-
-## TODO
-
-When autodiff is available, pass gradient to profilers / samplers whenever relavant.
 
 ## Documentation
 

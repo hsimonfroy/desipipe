@@ -16,6 +16,15 @@ def test_uid():
     print(id)
 
 
+def test_subprocess():
+    import os
+    import subprocess
+    proc = subprocess.Popen('mpiexec -np 1 python test_mpi.py'.split(), env={**os.environ, 'JOBID': 'TEST'})
+    out, err = proc.communicate()
+    print(out)
+
+
 if __name__ == '__main__':
 
-    test_uid()
+    #test_uid()
+    test_subprocess()

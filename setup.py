@@ -17,6 +17,8 @@ setup(name=package_basename,
       description='Package for DESI clustering analysis pipeline',
       license='BSD3',
       url='http://github.com/cosmodesi/desipipe',
-      install_requires=['numpy'],
+      install_requires=['mpi4py'],
       extras_require={},
-      packages=find_packages())
+      packages=find_packages(),
+      entry_points={'console_scripts': ['desipipe-mpispawn = desipipe.provider:mpi_spawn'],
+    })

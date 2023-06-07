@@ -18,7 +18,7 @@ import sqlite3
 from . import utils
 from .utils import BaseClass
 from .config import Config
-from .environment import get_environ
+from .environment import get_environ, change_environ
 from .scheduler import get_scheduler
 from .provider import get_provider
 
@@ -546,38 +546,11 @@ class BaseApp(BaseClass):
         return {'func': self.func}
 
 
-@contextlib.contextmanager
-def change_environ(environ):
-    """
-    Temporarily set the process environment variables.
-
-    >>> with set_env(PLUGINS_DIR='test/plugins'):
-    ...   "PLUGINS_DIR" in os.environ
-    True
-
-    >>> "PLUGINS_DIR" in os.environ
-    False
-
-    :type environ: dict[str, unicode]
-    :param environ: Environment variables to set
-    """
-    if environ is None:
-        yield
-    environ_bak = os.environ.copy()
-    os.environ.clear()
-    os.environ.update(environ)
-    try:
-        yield
-    finally:
-        os.environ.clear()
-        os.environ.update(environ_bak)
-
-
 class PythonApp(BaseApp):
 
-    def run(self, args, kwargs, environ=None):
+    def run(self, args, kwargs):
         errno, result = 0, None
-        with io.StringIO() as out, io.StringIO() as err, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), change_environ(environ):
+        with io.StringIO() as out, io.StringIO() as err, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 result = self.func(*args, **kwargs)
             except Exception as exc:
@@ -588,11 +561,11 @@ class PythonApp(BaseApp):
 
 class BashApp(BaseApp):
 
-    def run(self, args, kwargs, environ=None):
+    def run(self, args, kwargs):
         errno, result, out, err = 0, None, '', ''
         cmd = self.func(*args, **kwargs)
         try:
-            proc = subprocess.Popen(cmd, shell=True, env=environ)
+            proc = subprocess.Popen(cmd, shell=True)
             out, err = proc.communicate()
         except Exception as exc:
             err += ''.join(traceback.format_stack())
@@ -650,7 +623,7 @@ def work(queue, tmid=None, id=None, mpicomm=None):
         if task is None:
             break
         task.run()
-        task.update(jobid=os.environ.get('DESIPIPE_JOBID', ''))
+        # task.update(jobid=environ.get('DESIPIPE_JOBID', ''))
         if mpicomm.rank == 0:
             queue.add(task, replace=True)
 
