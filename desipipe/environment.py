@@ -49,13 +49,16 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
     def __init__(self, data=None, command=None):
         for name, value in self._defaults.items():
             self.setdefault(name, copy.copy(value))
-        self.command = command
+        self.command = getattr(self, '_command', None)
+        if command is not None:
+            self.command = str(command)
         super(BaseEnvironment, self).__init__(**(data or {}))
 
-    def all(self):  # including command
+    def as_dict(self, all=False):  # including command
         new = self.copy()
-        new.udpate(bash_env(self.command))
-        return new
+        if all:
+            new.update(bash_env(self.command))
+        return dict(new)
 
     def as_script(self):
         toret = ''
@@ -69,14 +72,18 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
 def get_environ(environ=None, data=None, **kwargs):
     if isinstance(environ, BaseEnvironment):
         return environ
+    if isinstance(environ, dict):
+        environ, data = None, {**environ, **(data or {})}
+    from .config import Config
+    config = Config().get('environ', {})
     if environ is None:
-        from .config import Config
-        config = Config().get('environ', {})
         if isinstance(config, str):
             environ = config
+            config = {}
         else:
-            environ = config.pop('name', 'base')
-            kwargs = {**config.pop(environ, {}), **(data or {})}
+            environ = config.get('name', 'base')
+    data = {**config.get('data', {}), **(data or {})}
+    kwargs.setdefault('command', config.get('command', None))
     return BaseEnvironment._registry[environ](data=data, **kwargs)
 
 

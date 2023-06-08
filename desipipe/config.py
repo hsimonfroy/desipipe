@@ -14,20 +14,20 @@ class Config(BaseDict):
         if user is None:
             user = self.default_user
         self.user = str(user)
+        self.data = {}
 
-        self.config_dir = os.getenv('DESIPIPE_CONFIG_DIR', None)
+        self.config_dir = os.getenv('DESIPIPE_CONFIG_DIR', '')
         default_config_dir = os.path.join(self.home_dir, '.desipipe')
         if not self.config_dir:
             self.config_dir = default_config_dir
 
-        config_fn = {}
         if os.path.isfile(self.config_fn):
-            config_fn = self.config_fn
+            with open(self.config_fn, 'r') as file:
+                self.data = yaml_parser(file.read())[0]
             try:
                 with open(self.config_fn, 'a'): pass
             except PermissionError:  # from now on, write to home
                 self.config_dir = default_config_dir
-        self.data = yaml_parser(config_fn)[0]
         self.setdefault('base_queue_dir', os.path.join(self.config_dir, 'queues'))
 
     @property

@@ -1,3 +1,4 @@
+import copy
 from .utils import BaseClass
 
 
@@ -19,7 +20,9 @@ class BaseScheduler(BaseClass, metaclass=RegisteredScheduler):
     _defaults = dict()
 
     def __init__(self, provider=None, **kwargs):
-        self.update(**{'provider': provider, **self._defaults, **kwargs})
+        for name, value in self._defaults.items():
+            setattr(self, name, copy.copy(value))
+        self.update(**{'provider': provider, **kwargs})
 
     def update(self, **kwargs):
         if 'provider' in kwargs:

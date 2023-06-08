@@ -6,7 +6,7 @@ import itertools
 import yaml
 
 from . import utils
-from .utils import BaseClass, BaseDict
+from .utils import BaseClass
 from .environment import get_environ
 from .io import get_filetype
 
@@ -41,32 +41,47 @@ YamlLoader.add_constructor('!none', none_constructor)
 
 def yaml_parser(string):
     """Parse string in *yaml* format."""
-    return yaml.load_all(string, Loader=YamlLoader)
+    return list(yaml.load_all(string, Loader=YamlLoader))
 
 
-class BaseFile(BaseDict):
+class BaseFile(BaseClass):
 
-    _defaults = dict(description='', id=None, filetype=None, path='', options=dict())
+    _defaults = dict(filetype='', path='', id='', author='', options=dict(), description='')
 
     def __init__(self, *args, **kwargs):
-        super(BaseFile, self).__init__(*args, **kwargs)
+        if len(args) > 1:
+            raise ValueError('Cannot take several args')
+        if len(args):
+            if isinstance(args[0], self.__class__):
+                self.__dict__.update(args[0].__dict__)
+                return
+            kwargs = {**args[0], **kwargs}
         for name, value in self._defaults.items():
-            self.setdefault(name, copy.copy(value))
+            setattr(self, name, copy.copy(value))
+        self.update(**kwargs)
 
+    def clone(self, **kwargs):
+        new = self.copy()
+        new.update(**kwargs)
+        return new
 
-def _make_property(name):
+    def update(self, **kwargs):
+        for name, value in kwargs.items():
+            if name in self._defaults:
+                setattr(self, name, type(self._defaults[name])(value))
+            else:
+                raise ValueError('Unknown argument {}; supports {}'.format(name, list(self._defaults)))
 
-    def getter(self):
-        return self[name]
+    def as_dict(self):
+        return {name: getattr(self, name) for name in self._defaults}
 
-    return getter
-
-
-for name in BaseFile._defaults:
-    setattr(BaseFile, name, _make_property(name))
+    def __repr__(self):
+        return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in self.as_dict()]))
 
 
 def _make_list(values):
+    if isinstance(values, range):
+        return values
     if not hasattr(values, '__iter__') or isinstance(values, str):
         values = [values]
     return list(values)
@@ -75,23 +90,19 @@ def _make_list(values):
 class FileEntry(BaseFile):
 
     """Class describing a file entry."""
-    _defaults = dict(description='', author='', id=None, filetype=None, path='', options=dict())
 
-    def __init__(self, *args, **kwargs):
-        super(FileEntry, self).__init__(*args, **kwargs)
-        options = {}
-        for name, values in self['options'].items():
-            if isinstance(values, str) and re.match(values, 'range(*)'):
-                values = eval(values)
-            options[name] = _make_list(values)
-        self['options'] = options
-
-    def options(self):
-        for values in itertools.product(*self['options'].values()):
-            return {name: values[iname] for iname, name in enumerate(self['options'])}
+    def update(self, **kwargs):
+        super(FileEntry, self).update(**kwargs)
+        if 'options' in kwargs:
+            options = {}
+            for name, values in self.options.items():
+                if isinstance(values, str) and re.match(r'range\((.*)\)$', values):
+                    values = eval(values)
+                options[name] = _make_list(values)
+            self.options = options
 
     def select(self, **kwargs):
-        options = self['options'].copy()
+        options = self.options.copy()
         for name, values in kwargs.items():
             if name in options:
                 options[name] = values
@@ -101,23 +112,26 @@ class FileEntry(BaseFile):
 
     def __len__(self):
         size = 1
-        for values in self['options'].values():
+        for values in self.options.values():
             size *= len(values)
         return size
 
     def __iter__(self):
-        for options in self.options():
-            fi = File({**self.data, 'options': options})
-            fi.environ = getattr(self, 'environ', {})
-            return fi
+        for values in itertools.product(*self.options.values()):
+            options = {name: values[iname] for iname, name in enumerate(self.options)}
+            fi = File()
+            fi.__dict__.update(self.__dict__)
+            fi.options = options
+            yield fi
 
 
 class File(BaseFile):
 
     """Class describing one file."""
+
     @property
-    def path(self):
-        path = self['path']
+    def rpath(self):
+        path = self.path
         environ = getattr(self, 'environ', {})
         placeholders = re.finditer(r'\$\{.*?\}', path)
         for placeholder in placeholders:
@@ -125,13 +139,13 @@ class File(BaseFile):
             placeholder_nobrackets = placeholder[2:-1]
             if placeholder_nobrackets in environ:
                 path = path.replace(placeholder, environ[placeholder_nobrackets])
-        return path.replace(**self.options)
+        return path.format(**self.options)
 
     def read(self, *args, **kwargs):
-        return get_filetype(filetype=self.filetype, path=self.path).read(*args, **kwargs)
+        return get_filetype(filetype=self.filetype, path=self.rpath).read(*args, **kwargs)
 
     def write(self, *args, **kwargs):
-        return get_filetype(filetype=self.filetype, path=self.path).write(*args, **kwargs)
+        return get_filetype(filetype=self.filetype, path=self.rpath).write(*args, **kwargs)
 
 
 class FileDataBase(BaseClass):
@@ -211,6 +225,7 @@ class FileDataBase(BaseClass):
         data = self.data.__getitem__(index)
         if isinstance(data, list):
             return self.__class__(data)
+        return data
 
     def __iter__(self):
         return iter(self.data)
@@ -226,6 +241,8 @@ class FileDataBase(BaseClass):
 
     def write(self, fn):
 
+        utils.mkdir(os.path.dirname(fn))
+
         with open(fn, 'w') as file:
 
             def list_rep(dumper, data):
@@ -233,28 +250,51 @@ class FileDataBase(BaseClass):
 
             yaml.add_representer(list, list_rep)
 
-            with open(fn, 'w') as file:
-                for entry in self:
-                    file.write(yaml.dumps(utils.dict_to_yaml(entry), default_flow_style=False) + '\n---\n')
+            yaml.dump_all([utils.dict_to_yaml(entry.as_dict()) for entry in self], file, default_flow_style=False)
+
+
+    def __copy__(self):
+        new = super(FileDataBase, self).__copy__()
+        new.data = self.data.copy()
+        return new
+
+    def __add__(self, other):
+        """Sum of `self`` + ``other``."""
+        new = self.__class__()
+        new.data += self.data
+        new.data += other.data
+        return new
+
+    def __radd__(self, other):
+        if other == 0: return self.copy()
+        return self.__add__(other)
+
+    def __iadd__(self, other):
+        if other == 0: return self.copy()
+        return self.__add__(other)
 
 
 class FileManager(BaseClass):
 
     def __init__(self, database=(), environ=None):
-        self.database = sum(FileDataBase(database) for database in _make_list(database))
+        self.db = sum(FileDataBase(database) for database in _make_list(database))
         self.environ = get_environ(environ)
-        for entry in self.database:
-            entry.environ = self.environ
+        for entry in self.db:
+            entry.environ = self.environ.as_dict(all=True)
 
     def select(self, *args, **kwargs):
         new = self.copy()
-        new.database = self.database.select(*args, **kwargs)
+        new.db = self.db.select(*args, **kwargs)
         return new
 
+    def __len__(self):
+        return len(self.db)
+
     def __iter__(self):
-        if not self.database:
+        if not self.db:
             return []
-        options = dict(self.database[0])
+
+        options = dict(self.db[0].options)
 
         def _intersect(options1, options2):
             options = {}
@@ -265,13 +305,13 @@ class FileManager(BaseClass):
                     options[name] = values
             return options
 
-        for entry in self.database:
+        for entry in self.db:
             options = _intersect(options, entry.options)
         for values in itertools.product(*options.values()):
             opt = {name: values[iname] for iname, name in enumerate(options)}
             database = FileDataBase()
-            for entry in self.database:
-                fi = entry.clone(options={**entry['options'], **opt})
-                fi.environ = self.environ
+            for entry in self.db:
+                fi = entry.clone(options={**entry.options, **opt})
+                fi.environ = self.environ.as_dict(all=True)
                 database.append(fi)
             yield database

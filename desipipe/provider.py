@@ -1,5 +1,6 @@
 import os
 import time
+import copy
 import random
 import subprocess
 
@@ -24,7 +25,9 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
     _defaults = dict()
 
     def __init__(self, environ=None, **kwargs):
-        self.update(**{'environ': environ, **self._defaults, **kwargs})
+        for name, value in self._defaults.items():
+            setattr(self, name, copy.copy(value))
+        self.update(**{'environ': environ, **kwargs})
         self.processes = []
 
     def update(self, **kwargs):
@@ -64,7 +67,7 @@ class LocalProvider(BaseProvider):
     def __call__(self, cmd, workers=1):
         for worker in range(workers):
             cmd = self.mpiexec.format(mpiprocs=self.mpiprocs_per_worker, cmd=cmd)
-            self.processes.append(subprocess.Popen(cmd, start_new_session=True, env={**os.environ, **self.environ.all()}))
+            self.processes.append(subprocess.Popen(cmd, start_new_session=True, env=self.environ.as_dict(all=True)))
             time.sleep(random.uniform(0.8, 1.2))
 
     def nrunning(self):
@@ -119,11 +122,19 @@ class SlurmProvider(BaseProvider):
 class NERSCProvider(SlurmProvider):
 
     name = 'nersc'
+    _defaults = {**SlurmProvider._defaults, 'threshold_nodes': 10}
 
     def __init__(self, *args, **kwargs):
         super(NERSCProvider, self).__init__(*args, **kwargs)
         self.max_mpiprocs_per_node = 128
         self.nodes_per_worker = max(self.nodes_per_worker, self.mpiprocs_per_worker * 1. / self.max_mpiprocs_per_node)
+
+    def cost(self, workers=1):
+        nodes = self.nodes(workers=workers)
+        if nodes < self.threshold_nodes:
+            return
+        # Beyond threshold_nodes, cost increases (longer time in queue)
+        return 2 * (nodes - self.threshold_nodes) + self.threshold_nodes
 
 
 import sys
