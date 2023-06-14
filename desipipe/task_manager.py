@@ -521,10 +521,8 @@ class Queue(BaseClass):
         if return_type == 'dict':
             return counts
         if return_type == 'str':
-            toret = ''
-            for state, count in counts.items():
-                toret += '\n{:10s}: {}'.format(state, count)
-            return toret
+            toret = ['{:10s}: {}'.format(state, count) for state, count in counts.items()]
+            return '\n'.join(toret)
         raise ValueError('Unkown return_type {}'.format(return_type))
 
     def __repr__(self):
@@ -603,11 +601,8 @@ class BashApp(BaseApp):
     def run(self, args, kwargs):
         errno, result, out, err = 0, None, '', ''
         cmd = self.func(*args, **kwargs)
-        try:
-            proc = subprocess.Popen(cmd.split(' '), shell=True)
-            out, err = proc.communicate()
-        except Exception as exc:
-            err += ''.join(traceback.format_stack())
+        proc = subprocess.Popen(cmd.split(' '), shell=True)
+        out, err = proc.communicate()
         return errno, result, err, out
 
 
@@ -705,11 +700,14 @@ def get_queue(queue, create=False, spawn=False):
                 toret += tmp
         return toret
     if '/' in queue:
-        queue = os.path.join(Config()['base_queue_dir'], queue)
+        if queue.startswith('.'):
+            queue = os.path.abspath(queue)
+        else:
+            queue = os.path.join(Config()['base_queue_dir'], queue)
     else:
         queue = os.path.join(Config().queue_dir, queue)
     if '*' in queue:
-        return [get_queue(queue, create=create, spawn=spawn) for queue in glob.glob(queue)]
+        return [get_queue(queue, create=create, spawn=spawn) for queue in glob.glob(queue) if queue.endswith('.sqlite')]
     return Queue(queue, create=create, spawn=spawn)
 
 
@@ -724,14 +722,16 @@ def action_from_args(action='work', args=None):
 
     if action == 'queues':
 
-        parser.add_argument('-q', '--queue', type=str, required=False, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
+        parser.add_argument('-q', '--queue', type=str, required=False, default='*/*', help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
         args = parser.parse_args(args=args)
         queues = get_queue(args.queue)
         if not queues:
             logger.info('No matching queue')
-        logger.info('Matching queues:\n')
+            return
+        logger.info('Matching queues:')
         for queue in queues:
             logger.info(str(queue))
+        return
 
     if action == 'work':
 
@@ -752,22 +752,23 @@ def action_from_args(action='work', args=None):
         args = parser.parse_args(args=args)
         if '*' in args.queue:
             raise ValueError('Provide single queue!')
-        logger.info('Tasks that are {}:\n'.format(args.state))
+        logger.info('Tasks that are {}:'.format(args.state))
         for task in get_queue(args.queue).tasks(state=args.state, tmid=args.tmid, id=args.id):
             for name in ['jobid', 'errno', 'err', 'out']:
-                logger.info('{}: {}\n'.format(name, getattr(task, name)))
+                logger.info('{}: {}'.format(name, getattr(task, name)))
             logger.info('=' * 20)
+        return
 
     parser.add_argument('-q', '--queue', nargs='*', type=str, required=True, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
 
     if action == 'delete':
 
-        parser.add_argument('--force', type=bool, required=True, default=False, help='Pass this flag to force delete')
+        parser.add_argument('--force', action='store_true', help='Pass this flag to force delete')
         args = parser.parse_args(args=args)
         queues = get_queue(args.queue)
         if not queues:
             logger.info('No queue to delete')
-        logger.info('I will delete these queues:\n')
+        logger.info('I will delete these queues:')
         for queue in queues:
             logger.info(str(queue))
         if not args.force:
@@ -787,17 +788,24 @@ def action_from_args(action='work', args=None):
 
     if action == 'resume':
 
+        parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process')
         args = parser.parse_args(args=args)
         queues = get_queue(args.queue)
         for queue in queues:
             logger.info('Resuming queue {}'.format(repr(queue)))
             queue.resume()
+        if args.spawn:
+            subprocess.Popen(['desipipe', 'spawn', '--queue', ' '.join(args.queue)], start_new_session=True, env=os.environ)
         return
 
     if action == 'spawn':
 
         parser.add_argument('--timeout', type=float, required=False, default=1e4, help='Stop after this time')
+        parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process and exit this one')
         args = parser.parse_args(args=args)
+        if args.spawn:
+            subprocess.Popen(['desipipe', 'spawn', '--queue', ' '.join(args.queue), '--timeout', str(args.timeout)], start_new_session=True, env=os.environ)
+            return
         queues = get_queue(args.queue)
         return spawn(queues, timeout=args.timeout)
 
@@ -806,11 +814,14 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--tmid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--id', type=str, required=False, default=None, help='Task ID')
         parser.add_argument('--state', type=str, required=False, default=TaskState.KILLED, choices=TaskState.ALL, help='Task state')
+        parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process')
         args = parser.parse_args(args=args)
         queues = get_queue(args.queue)
         for queue in queues:
-            for id in queue.tasks(state=args.state, property='ids'):
+            for id in queue.tasks(tmid=args.tmid, id=args.id, state=args.state, property='id'):
                 queue.set_task_state(id, state=TaskState.PENDING)
+        if args.spawn:
+            subprocess.Popen(['desipipe', 'spawn', '--queue', ' '.join(args.queue)], start_new_session=True, env=os.environ)
 
 
 action_from_args.actions = {

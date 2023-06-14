@@ -18,7 +18,7 @@ def test_queue():
     tm = TaskManager(queue, environ=Environment(), scheduler=dict(max_workers=4))
 
     @tm.python_app
-    def fraction(size=1000):
+    def fraction(size=10000):
         import numpy as np
         x, y = np.random.uniform(-1, 1, size), np.random.uniform(-1, 1, size)
         return np.sum((x**2 + y**2) < 1.) * 1. / size
@@ -32,7 +32,22 @@ def test_queue():
     print(average(*fractions).result())
 
 
+def test_cmdline():
+
+    import subprocess
+    queue = "'./_tests/*'"
+    queue_single = "./_tests/test.sqlite"
+    subprocess.call(['desipipe', 'queues', '-q', queue])
+    subprocess.call(['desipipe', 'tasks', '-q', queue_single, '--state', 'SUCCEEDED'])
+    subprocess.call(['desipipe', 'delete', '-q', queue])
+    subprocess.call(['desipipe', 'pause', '-q', queue])
+    subprocess.call(['desipipe', 'resume', '-q', queue])
+    subprocess.call(['desipipe', 'spawn', '-q', queue])
+    subprocess.call(['desipipe', 'retry', '-q', queue, '--state', 'SUCCEEDED', '--spawn'])
+
+
 if __name__ == '__main__':
 
     #test_app()
-    test_queue()
+    #test_queue()
+    test_cmdline()
