@@ -23,8 +23,6 @@ def exception_handler(exc_type, exc_value, exc_traceback, mpicomm=None):
         log.critical('Interrupted by the user.')
     else:
         log.critical('An error occured.')
-    if mpicomm.size > 1:
-        mpicomm.Abort()
 
 
 def mkdir(dirname, **kwargs):

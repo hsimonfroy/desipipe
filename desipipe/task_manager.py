@@ -12,6 +12,9 @@ import traceback
 import logging
 import argparse
 import hashlib
+import inspect
+import glob
+import textwrap
 
 import sqlite3
 
@@ -47,17 +50,19 @@ class Task(BaseClass):
         self.update(app=app, args=args, kwargs=kwargs, id=id, state=state)
 
     def update(self, **kwargs):
+        if 'app' in kwargs:
+            self.app = kwargs['app']
         if 'args' in kwargs:
             self.args = list(kwargs.pop('args') or ())
             self.args_require_ids = {}
             for iarg, arg in enumerate(self.args):
-                if isinstance(Task, arg):
+                if isinstance(arg, Future):
                     self.args_require_ids[iarg] = self.args[iarg] = arg.id
         if 'kwargs' in kwargs:
             self.kwargs = dict(kwargs.pop('kwargs') or {})
             self.kwargs_require_ids = {}
-            for key, value in self.kwargs:
-                if isinstance(Task, value):
+            for key, value in self.kwargs.items():
+                if isinstance(value, Future):
                     self.kwargs_require_ids[key] = self.kwargs[key] = value.id
         if 'state' in kwargs:
             self.state = kwargs.pop('state')
@@ -66,14 +71,17 @@ class Task(BaseClass):
                     self.state = TaskState.WAITING
                 else:
                     self.state = TaskState.PENDING
+        try:
+            uid = pickle.dumps((self.app, self.args, self.kwargs))
+        except (AttributeError, pickle.PicklingError) as exc:
+            raise ValueError('Make sure the task function, args and kwargs are picklable') from exc
         if 'id' in kwargs:
-            id = kwargs.pop('id')
+            id = kwargs.pop('id', uid)
             if id is None:
-                uid = pickle.dumps((self.app, self.args, self.kwargs))
                 hex = hashlib.md5(uid).hexdigest()
                 id = uuid.UUID(hex=hex)  # unique ID, tied to the given app, args and kwargs
             self.id = str(id)
-        for name in ['app', 'jobid', 'err', 'out', 'result', 'dtime']:
+        for name in ['app', 'jobid', 'errno', 'err', 'out', 'result', 'dtime']:
             if name in kwargs:
                 setattr(self, name, kwargs.pop(name))
         if kwargs:
@@ -86,9 +94,10 @@ class Task(BaseClass):
 
     @property
     def require_ids(self):
-        return list(set(self.args_require_ids.values()) & set(self.kwargs_require_ids.values()))
+        return list(set(self.args_require_ids.values()) | set(self.kwargs_require_ids.values()))
 
     def update_args(self, queue):
+        # print(self.args_require_ids)
         for iarg, id in self.args_require_ids.items():
             self.args[iarg] = queue[id].result
         for key, id in self.kwargs_require_ids.items():
@@ -102,10 +111,12 @@ class Task(BaseClass):
                 self.state = TaskState.KILLED
             else:
                 self.state = TaskState.FAILED
+        else:
+            self.state = TaskState.SUCCEEDED
         self.dtime = time.time() - t0
 
     def __getstate__(self):
-        return {name: getattr(self, name) for name in self._attrs}
+        return {name: getattr(self, name) for name in self._attrs if hasattr(self, name)}
 
 
 class Future(BaseClass):
@@ -114,7 +125,7 @@ class Future(BaseClass):
         self.queue = queue
         self.id = str(id)
 
-    def result(self, timeout=1e4, timestep=10.):
+    def result(self, timeout=1e4, timestep=1.):
         t0 = time.time()
         try:
             return self._result
@@ -122,11 +133,12 @@ class Future(BaseClass):
             while True:
                 if (time.time() - t0) < timeout:
                     if self.queue.tasks(id=self.id, property='state')[0] not in (TaskState.WAITING, TaskState.PENDING):
+                        # print(self.queue.tasks(self.id)[0].err)
                         self._result = self.queue.tasks(self.id)[0].result
                         return self._result
                     time.sleep(timestep * random.uniform(0.8, 1.2))
                 else:
-                    self.log_error('time out while getting result', flush=True)
+                    self.log_error('time out while getting result')
                     return None
 
 
@@ -146,10 +158,12 @@ class Queue(BaseClass):
         if base_dir is None:
             base_dir = Config().queue_dir
 
-        if not re.test(name, '^[a-zA-z0-9-_]+$'):
-            raise ValueError('Input queue name  must be alphanumeric plus underscores and hyphens')
+        if re.match('^[a-zA-Z0-9_/.-]+$', name) is None:
+            raise ValueError('Input queue name {} must be alphanumeric plus underscores and hyphens'.format(name))
 
-        self.fn = os.path.join(base_dir, name, 'queue.sqlite')
+        if not name.endswith('.sqlite'):
+            name += '.sqlite'
+        self.fn = os.path.abspath(os.path.join(base_dir, name))
         self.base_dir = os.path.dirname(self.fn)
 
         # Check if it already exists and/or if we are supposed to create it
@@ -176,14 +190,14 @@ class Queue(BaseClass):
                 task     TEXT,
                 state    TEXT,
                 tmid     TEXT  -- task manager id
-            }
+            );
             -- Dependencies table.  Multiple entries for multiple deps.
             CREATE TABLE requires (
                 id      TEXT,     -- task.id foreign key
                 require TEXT,     -- task.id that it depends upon
             -- Add foreign key constraints
                 FOREIGN KEY(id) REFERENCES tasks(id),
-                FOREIGN KEY(requires) REFERENCES tasks(id)
+                FOREIGN KEY(require) REFERENCES tasks(id)
             );
             -- Task manager table
             CREATE TABLE managers (
@@ -205,7 +219,7 @@ class Queue(BaseClass):
         else:
             self.db = sqlite3.Connection(self.fn, timeout=60)
         if spawn:
-            subprocess.Popen('python desipipe spawn --queue {}'.format(self.base_dir), start_new_session=True)
+            subprocess.Popen(['desipipe', 'spawn', '--queue', self.fn], start_new_session=True, env=os.environ)
 
     def _query(self, query, timeout=120., timestep=2., many=False):
         """
@@ -240,7 +254,7 @@ class Queue(BaseClass):
                 # are hammering on the database. For these cases, wait
                 # and try again a few times before giving up.
                 known_excs = ['database is locked', 'database disk image is malformed']  # on NFS
-                if exc.message.lower() in known_excs:
+                if getattr(exc, 'message', '').lower() in known_excs:
                     if (time.time() - t0) < timeout:
                         self.db.close()
                         time.sleep(timestep * random.uniform(0.8, 1.2))
@@ -259,18 +273,17 @@ class Queue(BaseClass):
         id : string task id
         requires : list of ids upon which taskid depends
         """
-        query = 'INSERT INTO requires (id, require) VALUES (?, ?)'
+        query = 'INSERT OR REPLACE INTO requires (id, require) VALUES (?, ?)'
         if isinstance(requires, str):
             self._query([query, (id, requires)])
         else:
             args = [(id, x) for x in requires]
             self._query([query, args], many=True)
-
         self.db.commit()
 
     def _add_manager(self, manager):
-        query = 'INSERT INTO managers (tmid, manager) VALUES (?, ?)'
-        self._query([query, (manager.id, manager)])
+        query = 'INSERT OR REPLACE INTO managers (tmid, manager) VALUES (?, ?)'
+        self._query([query, (manager.id, pickle.dumps(manager))])
         self.db.commit()
 
     def add(self, tasks, task_manager=None, replace=False):
@@ -279,41 +292,46 @@ class Queue(BaseClass):
             tasks = [tasks]
         ids, requires, managers, states, tasks_serialized, futures = [], [], [], [], [], []
         for task in tasks:
+            futures.append(Future(queue=self, id=task.id))
+            if replace is None:
+                row = self._query(['SELECT COUNT(id) FROM tasks WHERE id=?', (task.id,)]).fetchone()
+                if row is not None and row[0]: continue
             if task_manager is not None:
-                task = task.clone(task_manager=task_manager)
+                task.app.task_manager = task_manager
             ids.append(task.id)
             requires.append(task.require_ids)
-            managers.append(task.task_manager)
+            managers.append(task.app.task_manager)
             states.append(task.state)
-            tasks_serialized.append(pickle.dumps(task))
-            futures.append(Future(queue=self, id=task.id))
+            tasks_serialized.append(pickle.dumps(task.clone(app=task.app.clone(task_manager=None))))
         query = 'INSERT'
-        if replace:
-            query = 'REPLACE'
-        if replace is None:
-            query = 'INSERT OR REPLACE'
+        if replace: query = 'REPLACE'
         query += ' INTO tasks (id, task, state, tmid) VALUES (?,?,?,?)'
+        self._get_lock()
         self._query([query, zip(ids, tasks_serialized, states, [tm.id for tm in managers])], many=True)
-        self.db.commit()
         if not replace:
             for id, requires in zip(ids, requires):
                 self._add_requires(id, requires)
             for manager in managers:
                 self._add_manager(manager)
+        self.db.commit()
+        self._release_lock()
+        for id, state in zip(ids, states):
+            if state in (TaskState.SUCCEEDED, TaskState.FAILED):
+                self._update_waiting_tasks(id)
         if isscalar:
             return futures[0]
         return futures
 
     # Get and release locks on the data base
-    def _get_lock(self, timeout=10., timestep=2.):
+    def _get_lock(self, timeout=1., timestep=2.):
         t0 = time.time()
         while True:
             try:
                 self.db.execute('BEGIN IMMEDIATE')
                 return True
-            except sqlite3.OperationalError:
-                if (time.time()  - t0) > timeout:
-                    self.log_error('unable to get database lock', flush=True)
+            except sqlite3.OperationalError as exc:
+                if (time.time() - t0) > timeout:
+                    self.log_error('unable to get database lock')
                     return False
                 time.sleep(timestep * random.uniform(0.8, 1.2))
 
@@ -323,8 +341,7 @@ class Queue(BaseClass):
     # Get / Set state of the queue
     @property
     def state(self):
-        state = self.db('SELECT value FROM metadata WHERE key="queue_state"').fetchone()[0]
-        return state
+        return self._query('SELECT value FROM metadata WHERE key="state"').fetchone()[0]
 
     @state.setter
     def state(self, state):
@@ -334,23 +351,19 @@ class Queue(BaseClass):
         self.db.commit()
 
     def set_task_state(self, id, state):
-        self._get_lock()
         try:
+            self._get_lock()
             query = 'UPDATE tasks SET state=? WHERE id=?'
             self._query([query, (state, id)])
             self.db.commit()
 
-            if state in (Task.SUCCEEDED, Task.FAILED):
+            if state in (TaskState.SUCCEEDED, TaskState.FAILED):
                 self._update_waiting_tasks(id)
 
-        except Exception as exc:
+        finally:
             self._release_lock()
-            raise exc
 
-        self.db.commit()
-        self._release_lock()
-
-    #- functions to update states based on requires
+    # functions to update states based on requires
     def _update_waiting_task_state(self, id, force=False):
         """
         Check if all requires of this task have finished running.
@@ -361,11 +374,12 @@ class Queue(BaseClass):
         """
         if not self._get_lock():
             self.log_error('unable to get db lock; not updating waiting task state')
+            return
 
         # Ensure that it is still waiting
         # (another process could have moved it into pending)
         if not force:
-            q = 'SELECT state FROM tasks where tasks.id = ?'
+            q = 'SELECT state FROM tasks where tasks.id=?'
             row = self.db.execute(q, (id,)).fetchone()
             if row is None:
                 self._release_lock()
@@ -375,34 +389,25 @@ class Queue(BaseClass):
                 return
 
         # Count number of requires that are still pending or waiting
-        query = """\
-        SELECT COUNT(d.requires)
-        FROM requires d JOIN tasks t ON d.requires = t.id
-        WHERE d.id = ? AND t.state IN ("{}", "{}", "{}")
-        """.format(Task.PENDING, Task.WAITING, Task.RUNNING)
-        row = self._query([query, (id,)]).fetchone()
+        query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.id WHERE d.id=? AND t.state IN (?, ?, ?)'
+        row = self._query([query, (id, TaskState.PENDING, TaskState.WAITING, TaskState.RUNNING)]).fetchone()
+        self._release_lock()
         if row is None:
-            self._release_lock()
             return
         if row[0] == 0:
             self.set_task_state(id, TaskState.PENDING)
         elif force:
             self.set_task_state(id, TaskState.WAITING)
 
-        self._release_lock()
-
     def _update_waiting_tasks(self, id):
         """
         Identify tasks that are waiting for id, and call
         :meth:`_update_waiting_task_state` on them.
         """
-        query = """\
-        SELECT id FROM tasks t JOIN requires d ON d.id = t.id
-        WHERE d.requires = ? AND t.state = "{}"
-        """.format(TaskState.WAITING)
-        waiting_tasks = self._query([query, (id,)]).fetchall()
+        query = 'SELECT t.id FROM tasks t JOIN requires d ON d.id=t.id WHERE d.require=? AND t.state=?'
+        waiting_tasks = self._query([query, (id, TaskState.WAITING)]).fetchall()
         for id in waiting_tasks:
-            self._update_waiting_task_state(id)
+            self._update_waiting_task_state(id[0])
 
     def pause(self):
         self.state = QueueState.PAUSED
@@ -434,10 +439,10 @@ class Queue(BaseClass):
         else:
             self.log_warning("There may be tasks left in queue but I couldn't get lock to see")
             return None
+        self._release_lock()
         if task is None:
             return None
         self.set_task_state(task.id, TaskState.RUNNING)
-        self._release_lock()
         task.update(state=TaskState.RUNNING)
         task.update_args(self)
         return task
@@ -452,14 +457,15 @@ class Queue(BaseClass):
         if state is not None:
             select.append('state="{}"'.format(state))
         query = 'SELECT task, id, state, tmid FROM tasks'
-        if select: query += 'WHERE {}'.format(' AND '.join(select))
+        if select: query += ' WHERE {}'.format(' AND '.join(select))
         tasks = self._query(query)
-        if one: tasks = tasks.fetchone()
-        else: tasks = tasks.fetchall()
-        if tasks is None:
-            if one:
-                return None
-            return []
+        if one:
+            tasks = tasks.fetchone()
+            if tasks is None: return None
+            tasks = [tasks]
+        else:
+            tasks = tasks.fetchall()
+            if tasks is None: return []
         toret = []
         for task in tasks:
             task, id, state, tmid = task
@@ -474,7 +480,8 @@ class Queue(BaseClass):
                 toret.append(task_manager)
                 continue
             task = pickle.loads(task)
-            task.update(id=id, state=state, task_manager=task_manager)
+            task.update(id=id, state=state)
+            task.app.task_manager = task_manager
             toret.append(task)
         if one:
             return toret[0]
@@ -506,7 +513,7 @@ class Queue(BaseClass):
         if state is not None:
             select.append('state="{}"'.format(state))
         query = 'SELECT count(state) FROM tasks'
-        if select: query += 'WHERE {}'.format(' AND '.join(select))
+        if select: query += ' WHERE {}'.format(' AND '.join(select))
         return self._query(query).fetchone()[0]
 
     def summary(self, tmid=None, return_type='dict'):
@@ -532,18 +539,50 @@ class Queue(BaseClass):
             raise KeyError('task {} not found'.format(id))
         return toret[0]
 
+    def __getstate__(self):
+        return {'fn': self.fn}
+
+    def __setstate__(self, state):
+        self.__init__(state['fn'], base_dir='', create=False, spawn=False)
+
 
 class BaseApp(BaseClass):
 
     def __init__(self, func, task_manager=None):
-        self.func = func
-        self.task_manager = task_manager
+        if isinstance(func, self.__class__):
+            self.__dict__.update(func.__dict__)
+            return
+        self.update(func=func, task_manager=task_manager)
+
+    def update(self, **kwargs):
+        if 'func' in kwargs:
+            self.func = kwargs.pop('func')
+            self.name = self.func.__name__
+            self.code = textwrap.dedent(inspect.getsource(self.func)).split('\n')
+            if self.code[0].startswith('@'):
+                self.code = self.code[1:]
+            self.code = '\n'.join(self.code)
+        if 'task_manager' in kwargs:
+            self.task_manager = kwargs.pop('task_manager')
+        if kwargs:
+            raise ValueError('Unrecognized arguments {}'.format(kwargs))
+
+    def clone(self, **kwargs):
+        new = self.copy()
+        new.update(**kwargs)
+        return new
 
     def __call__(self, *args, **kwargs):
         return self.task_manager.add(Task(self, args, kwargs))
 
     def __getstate__(self):
-        return {'func': self.func}
+        state = {name: getattr(self, name) for name in ['name', 'code', 'task_manager']}
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        exec(self.code)
+        self.func = locals()[self.name]
 
 
 class PythonApp(BaseApp):
@@ -555,7 +594,7 @@ class PythonApp(BaseApp):
                 result = self.func(*args, **kwargs)
             except Exception as exc:
                 errno = getattr(exc, 'errno', 42)
-                err.write(''.join(traceback.format_stack()))
+                raise exc
             return errno, result, err.getvalue(), out.getvalue()
 
 
@@ -565,7 +604,7 @@ class BashApp(BaseApp):
         errno, result, out, err = 0, None, '', ''
         cmd = self.func(*args, **kwargs)
         try:
-            proc = subprocess.Popen(cmd, shell=True)
+            proc = subprocess.Popen(cmd.split(' '), shell=True)
             out, err = proc.communicate()
         except Exception as exc:
             err += ''.join(traceback.format_stack())
@@ -575,16 +614,13 @@ class BashApp(BaseApp):
 class TaskManager(BaseClass):
 
     def __init__(self, queue, id=None, environ=None, scheduler=None, provider=None):
-        self.queue = Queue(queue)
-        self.update(id=id, environ=environ, scheduler=scheduler, provider=provider)
+        self.update(queue=queue, id=id, environ=environ, scheduler=scheduler, provider=provider)
 
     def update(self, **kwargs):
-        for name, func in zip(['environ', 'scheduler', 'provider'],
-                              [get_environ, get_scheduler, get_provider]):
+        for name, func in zip(['queue', 'environ', 'scheduler', 'provider'],
+                              [Queue, get_environ, get_scheduler, get_provider]):
             if name in kwargs:
                 setattr(self, name, func(kwargs.pop(name)))
-        if kwargs:
-            raise ValueError('Unrecognized arguments {}'.format(kwargs))
         if 'id' in kwargs:
             id = kwargs.pop('id')
             if id is None:
@@ -592,6 +628,8 @@ class TaskManager(BaseClass):
                 hex = hashlib.md5(uid).hexdigest()
                 id = uuid.UUID(hex=hex)  # unique ID, tied to the given environ, scheduler, provider
             self.id = str(id)
+        if kwargs:
+            raise ValueError('Unrecognized arguments {}'.format(kwargs))
 
     def clone(self, **kwargs):
         new = self.copy()
@@ -608,6 +646,7 @@ class TaskManager(BaseClass):
         return self.queue.add(task, task_manager=self, replace=replace)
 
     def spawn(self, *args, **kwargs):
+        self.scheduler.update(provider=self.provider)
         self.scheduler(*args, **kwargs)
 
 
@@ -617,57 +656,61 @@ def work(queue, tmid=None, id=None, mpicomm=None):
         mpicomm = MPI.COMM_WORLD
     while True:
         task = None
+        # print(queue.summary(), queue.counts(state='PENDING'))
         if mpicomm.rank == 0:
             task = queue.pop(tmid=tmid, id=id)
+        # print(task, queue.counts(state=TaskState.PENDING))
         task = mpicomm.bcast(task, root=0)
         if task is None:
             break
         task.run()
         # task.update(jobid=environ.get('DESIPIPE_JOBID', ''))
+        # print(task.state, task.result)
         if mpicomm.rank == 0:
             queue.add(task, replace=True)
 
 
-def spawn(queue, timeout=1e4, timestep=10.):
+def spawn(queue, timeout=1e4, timestep=2.):
     queues = [queue] if isinstance(queue, Queue) else queue
     t0 = time.time()
+    stop = False
     while True:
-        if (time.time() - t0) < timeout:
+        if (time.time() - t0) > timeout:
             break
-        if all(queue.paused for queue in queues):
+        if all(queue.paused for queue in queues) or stop:
             break
+        stop = True
         for queue in queues:
             if queue.paused:
                 continue
-            for manager in queue.managers(property='id'):
+            for manager in queue.managers():
                 ntasks = queue.counts(tmid=manager.id, state=TaskState.PENDING)
-                manager.spawn('python desipipe work --queue {} --tmid {}'.format(queue.name, manager.id), ntasks=ntasks)
+                # for task in queue.tasks():
+                #     print(task.state, getattr(task, 'err', None))
+                if ntasks: stop = False
+                # print('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id))
+                # manager.spawn('desipipe work --queue {}'.format(queue.fn), ntasks=ntasks)
+                manager.spawn('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id), ntasks=ntasks)
         time.sleep(timestep * random.uniform(0.8, 1.2))
 
 
 def get_queue(queue, create=False, spawn=False):
-    splits = queue.split('/', maxsplit=1)
-    if len(splits) == 1:
-        users, queues = Config.default_user, splits[0]
+    if isinstance(queue, list):
+        toret = []
+        for queue in queue:
+            tmp = get_queue(queue, create=create, spawn=spawn)
+            if isinstance(tmp, Queue):
+                toret.append(tmp)
+            else:
+                toret += tmp
+        return toret
+    if '/' in queue:
+        queue = os.path.join(Config()['base_queue_dir'], queue)
     else:
-        users, queues = splits
-    if '*' in users:
-        toret = []
-        for f in os.scandir(Config().base_queue_dir):
-            if f.is_dir():
-                tmp = get_queue('{}/{}'.format(f.name, queues), create=create, spawn=spawn)
-                if isinstance(tmp, Queue):
-                    toret.append(tmp)
-                else:
-                    toret += tmp
-        return toret
-    if '*' in queues:
-        toret = []
-        for f in os.scandir(Config(user=users).queue_dir):
-            if f.is_dir():
-                toret.append(get_queue('{}/{}'.format(users, f.name), create=create, spawn=spawn))
-        return toret
-    return Queue(queues, base_dir=Config(user=users).queue_dir, create=create, spawn=spawn)
+        queue = os.path.join(Config().queue_dir, queue)
+    if '*' in queue:
+        return [get_queue(queue, create=create, spawn=spawn) for queue in glob.glob(queue)]
+    return Queue(queue, create=create, spawn=spawn)
 
 
 def action_from_args(action='work', args=None):
@@ -679,6 +722,17 @@ def action_from_args(action='work', args=None):
 
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
+    if action == 'queues':
+
+        parser.add_argument('-q', '--queue', type=str, required=False, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
+        args = parser.parse_args(args=args)
+        queues = get_queue(args.queue)
+        if not queues:
+            logger.info('No matching queue')
+        logger.info('Matching queues:\n')
+        for queue in queues:
+            logger.info(str(queue))
+
     if action == 'work':
 
         parser.add_argument('-q', '--queue', type=str, required=True, help='Name of queue; user/queue to select user != {}'.format(Config.default_user))
@@ -688,17 +742,6 @@ def action_from_args(action='work', args=None):
         if '*' in args.queue:
             raise ValueError('Provide single queue!')
         return work(get_queue(args.queue), tmid=args.tmid, id=args.id)
-
-    if action == 'queues':
-
-        parser.add_argument('-q', '--queue', type='*', required=False, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
-        args = parser.parse_args(args=args)
-        queues = get_queue(args.queue)
-        if not queues:
-            logger.info('No matching queue')
-        logger.info('Matching queues:\n')
-        for queue in queues:
-            logger.info(str(queue))
 
     if action == 'tasks':
 
@@ -755,7 +798,7 @@ def action_from_args(action='work', args=None):
 
         parser.add_argument('--timeout', type=float, required=False, default=1e4, help='Stop after this time')
         args = parser.parse_args(args=args)
-        queues = get_queue(args, single=False)
+        queues = get_queue(args.queue)
         return spawn(queues, timeout=args.timeout)
 
     if action == 'retry':
@@ -764,7 +807,7 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--id', type=str, required=False, default=None, help='Task ID')
         parser.add_argument('--state', type=str, required=False, default=TaskState.KILLED, choices=TaskState.ALL, help='Task state')
         args = parser.parse_args(args=args)
-        queues = get_queue(args, single=False)
+        queues = get_queue(args.queue)
         for queue in queues:
             for id in queue.tasks(state=args.state, property='ids'):
                 queue.set_task_state(id, state=TaskState.PENDING)

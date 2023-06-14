@@ -31,22 +31,24 @@ class BaseScheduler(BaseClass, metaclass=RegisteredScheduler):
             if name in self._defaults:
                 setattr(self, name, type(self._defaults[name])(value))
             else:
-                raise ValueError('Unknown argument {}; supports {}'.format(name, list(self._defaults)))
+                raise ValueError('Unrecognized argument {}; supports {}'.format(name, list(self._defaults)))
 
 
 def get_scheduler(scheduler=None, **kwargs):
+    if isinstance(scheduler, BaseScheduler):
+        return scheduler
+    if isinstance(scheduler, dict):
+        scheduler, kwargs = None, {**scheduler, **kwargs}
     if scheduler is None:
         from .config import Config
         scheduler = Config().get('scheduler', 'simple')
-    if isinstance(scheduler, BaseScheduler):
-        return scheduler
     return BaseScheduler._registry[scheduler](**kwargs)
 
 
 Scheduler = get_scheduler
 
 
-class SimpleScheduler(BaseClass):
+class SimpleScheduler(BaseScheduler):
 
     name = 'simple'
     _defaults = dict(max_workers=1)

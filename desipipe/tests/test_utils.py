@@ -4,8 +4,7 @@ import hashlib
 
 
 def func(a, b, c=2):
-    toret = a * b * c
-    return toret
+    return a * b * c
 
 
 def test_uid():

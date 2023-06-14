@@ -47,12 +47,13 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
     _defaults = dict()
 
     def __init__(self, data=None, command=None):
+        self.data = {}
         for name, value in self._defaults.items():
             self.setdefault(name, copy.copy(value))
         self.command = getattr(self, '_command', None)
         if command is not None:
             self.command = str(command)
-        super(BaseEnvironment, self).__init__(**(data or {}))
+        self.update(**(data or {}))
 
     def as_dict(self, all=False):  # including command
         new = self.copy()

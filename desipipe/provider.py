@@ -67,7 +67,8 @@ class LocalProvider(BaseProvider):
     def __call__(self, cmd, workers=1):
         for worker in range(workers):
             cmd = self.mpiexec.format(mpiprocs=self.mpiprocs_per_worker, cmd=cmd)
-            self.processes.append(subprocess.Popen(cmd, start_new_session=True, env=self.environ.as_dict(all=True)))
+            #self.processes.append(subprocess.Popen(cmd.split(' ')))
+            self.processes.append(subprocess.Popen(cmd.split(' '), start_new_session=True, env={**os.environ, **self.environ.as_dict(all=True)}))
             time.sleep(random.uniform(0.8, 1.2))
 
     def nrunning(self):
@@ -103,7 +104,7 @@ class SlurmProvider(BaseProvider):
         # --parsable to get jobid (optionally, cluster name)
         # -- wrap to pass the job
         cmd = f'sbatch --account {self.account} --constraint {self.contraint} --queue {self.queue} --time {self.time} --nodes {nodes:d} --parsable --wrap "{cmd}"'
-        proc = subprocess.Popen(cmd, shell=True)
+        proc = subprocess.Popen(cmd.split(' '), shell=True)
         out, err = proc.communicate()
         self.processes.append(out.split(',')[0])  # jobid
 

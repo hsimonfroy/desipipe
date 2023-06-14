@@ -6,8 +6,8 @@ from .task_manager import action_from_args
 
 def main():
 
-    help_msg = 'Add one of the following commands and its arguments (`<command> -h` for help):\n{}'
-    for action, description in action_from_args.actions:
+    help_msg = 'Add one of the following commands and its arguments (`<command> -h` for help):\n'
+    for action, description in action_from_args.actions.items():
         help_msg += '{}: {}\n'.format(action, description)
 
     try:
@@ -20,6 +20,7 @@ def main():
         print(help_msg)
         exit()
 
+    sys.argv.pop(1)
     action_from_args(command_or_input)
 
 
