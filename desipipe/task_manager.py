@@ -38,9 +38,58 @@ task_states = ['WAITING',       # Waiting for requires to finish
 TaskState = type('TaskState', (), {**dict(zip(task_states, task_states)), 'ALL': task_states})
 
 
+class QueuePickler(pickle.Pickler):
+
+    def persistent_id(self, obj):
+        # Instead of pickling MemoRecord as a regular class instance, we emit a
+        # persistent ID.
+        if isinstance(obj, Future):
+            # Here, our persistent ID is simply a tuple, containing a tag and a
+            # key, which refers to a specific record in the database.
+            ids = getattr(self, 'future_ids', [])
+            ids.append(obj.id)
+            setattr(self, 'future_ids', ids)
+            return ('Future', obj.id)
+        else:
+            # If obj does not have a persistent ID, return None. This means obj
+            # needs to be pickled as usual.
+            return None
+
+    @classmethod
+    def dumps(cls, obj, *args, **kwargs):
+        f = io.BytesIO()
+        cls(f, *args, **kwargs).dump(obj)
+        return f.getvalue()
+
+
+class QueueUnpickler(pickle.Unpickler):
+
+    def __init__(self, file, queue=None):
+        super().__init__(file)
+        self.queue = queue
+
+    def persistent_load(self, pid):
+        # This method is invoked whenever a persistent ID is encountered.
+        # Here, pid is the tuple returned by DBPickler.
+        tag, id = pid
+        if tag == 'Future':
+            # Fetch the referenced record from the database and return it.
+            return self.queue[id].result
+        else:
+            # Always raises an error if you cannot return the correct object.
+            # Otherwise, the unpickler will think None is the object referenced
+            # by the persistent ID.
+            raise pickle.UnpicklingError('unsupported persistent object')
+
+    @classmethod
+    def loads(cls, s, *args, **kwargs):
+        f = io.BytesIO(s)
+        return cls(f, *args, **kwargs).load()
+
+
 class Task(BaseClass):
 
-    _attrs = ['id', 'app', 'args', 'kwargs', 'args_require_ids', 'kwargs_require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'result', 'dtime']
+    _attrs = ['id', 'app', 'args', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'result', 'dtime']
 
     def __init__(self, app, args=None, kwargs=None, id=None, state=None):
         for name in ['jobid', 'err', 'out']:
@@ -53,31 +102,29 @@ class Task(BaseClass):
         if 'app' in kwargs:
             self.app = kwargs['app']
         if 'args' in kwargs:
-            self.args = list(kwargs.pop('args') or ())
-            self.args_require_ids = {}
-            for iarg, arg in enumerate(self.args):
-                if isinstance(arg, Future):
-                    self.args_require_ids[iarg] = self.args[iarg] = arg.id
+            self.args = tuple(kwargs.pop('args'))
         if 'kwargs' in kwargs:
             self.kwargs = dict(kwargs.pop('kwargs') or {})
-            self.kwargs_require_ids = {}
-            for key, value in self.kwargs.items():
-                if isinstance(value, Future):
-                    self.kwargs_require_ids[key] = self.kwargs[key] = value.id
+        require_id = 'id' in kwargs and kwargs['id'] is None
+        if not hasattr(self, 'require_ids') or require_id:
+            try:
+                f = io.BytesIO()
+                pickler = QueuePickler(f)
+                pickler.dump((self.app, self.args, self.kwargs))
+                uid = f.getvalue()
+                self.require_ids = list(getattr(pickler, 'future_ids', []))
+            except (AttributeError, pickle.PicklingError) as exc:
+                raise ValueError('Make sure the task function, args and kwargs are picklable') from exc
         if 'state' in kwargs:
             self.state = kwargs.pop('state')
             if self.state is None:
-                if self.args_require_ids or self.kwargs_require_ids:
+                if self.require_ids:
                     self.state = TaskState.WAITING
                 else:
                     self.state = TaskState.PENDING
-        try:
-            uid = pickle.dumps((self.app, self.args, self.kwargs))
-        except (AttributeError, pickle.PicklingError) as exc:
-            raise ValueError('Make sure the task function, args and kwargs are picklable') from exc
         if 'id' in kwargs:
-            id = kwargs.pop('id', uid)
-            if id is None:
+            id = kwargs.pop('id')
+            if require_id:
                 hex = hashlib.md5(uid).hexdigest()
                 id = uuid.UUID(hex=hex)  # unique ID, tied to the given app, args and kwargs
             self.id = str(id)
@@ -91,17 +138,6 @@ class Task(BaseClass):
         new = self.copy()
         new.update(*args, **kwargs)
         return new
-
-    @property
-    def require_ids(self):
-        return list(set(self.args_require_ids.values()) | set(self.kwargs_require_ids.values()))
-
-    def update_args(self, queue):
-        # print(self.args_require_ids)
-        for iarg, id in self.args_require_ids.items():
-            self.args[iarg] = queue[id].result
-        for key, id in self.kwargs_require_ids.items():
-            self.kwargs[key] = queue[id].result
 
     def run(self):
         t0 = time.time()
@@ -283,7 +319,7 @@ class Queue(BaseClass):
 
     def _add_manager(self, manager):
         query = 'INSERT OR REPLACE INTO managers (tmid, manager) VALUES (?, ?)'
-        self._query([query, (manager.id, pickle.dumps(manager))])
+        self._query([query, (manager.id, QueuePickler.dumps(manager))])
         self.db.commit()
 
     def add(self, tasks, task_manager=None, replace=False):
@@ -302,7 +338,7 @@ class Queue(BaseClass):
             requires.append(task.require_ids)
             managers.append(task.app.task_manager)
             states.append(task.state)
-            tasks_serialized.append(pickle.dumps(task.clone(app=task.app.clone(task_manager=None))))
+            tasks_serialized.append(QueuePickler.dumps(task.clone(app=task.app.clone(task_manager=None))))
         query = 'INSERT'
         if replace: query = 'REPLACE'
         query += ' INTO tasks (id, task, state, tmid) VALUES (?,?,?,?)'
@@ -406,6 +442,7 @@ class Queue(BaseClass):
         """
         query = 'SELECT t.id FROM tasks t JOIN requires d ON d.id=t.id WHERE d.require=? AND t.state=?'
         waiting_tasks = self._query([query, (id, TaskState.WAITING)]).fetchall()
+        # print('LOOOL', waiting_tasks)
         for id in waiting_tasks:
             self._update_waiting_task_state(id[0])
 
@@ -444,7 +481,6 @@ class Queue(BaseClass):
             return None
         self.set_task_state(task.id, TaskState.RUNNING)
         task.update(state=TaskState.RUNNING)
-        task.update_args(self)
         return task
 
     def tasks(self, id=None, tmid=None, state=None, one=False, property=None):
@@ -479,7 +515,7 @@ class Queue(BaseClass):
             if property == 'task_manager':
                 toret.append(task_manager)
                 continue
-            task = pickle.loads(task)
+            task = QueueUnpickler.loads(task, queue=self)
             task.update(id=id, state=state)
             task.app.task_manager = task_manager
             toret.append(task)
@@ -501,7 +537,7 @@ class Queue(BaseClass):
             if property in ('tmid', 'id'):
                 toret.append(tmid)
                 continue
-            toret.append(pickle.loads(manager))
+            toret.append(QueueUnpickler.loads(manager, queue=self))
         if one:
             return toret[0]
         return toret
@@ -619,7 +655,7 @@ class TaskManager(BaseClass):
         if 'id' in kwargs:
             id = kwargs.pop('id')
             if id is None:
-                uid = pickle.dumps((self.environ, self.scheduler, self.provider))
+                uid = QueuePickler.dumps((self.environ, self.scheduler, self.provider))
                 hex = hashlib.md5(uid).hexdigest()
                 id = uuid.UUID(hex=hex)  # unique ID, tied to the given environ, scheduler, provider
             self.id = str(id)
@@ -767,7 +803,8 @@ def action_from_args(action='work', args=None):
         args = parser.parse_args(args=args)
         queues = get_queue(args.queue)
         if not queues:
-            logger.info('No queue to delete')
+            logger.info('No queue to delete.')
+            return
         logger.info('I will delete these queues:')
         for queue in queues:
             logger.info(str(queue))
