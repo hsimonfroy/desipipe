@@ -8,8 +8,6 @@ import traceback
 from collections import UserDict
 from pathlib import Path
 
-import numpy as np
-
 
 def exception_handler(exc_type, exc_value, exc_traceback, mpicomm=None):
     """Print exception with a logger."""
@@ -199,15 +197,15 @@ def dict_to_yaml(d):
         elif is_sequence(v):
             v = dict_to_yaml({i: vv for i, vv in enumerate(v)})
             v = [v[i] for i in range(len(v))]
-        elif isinstance(v, np.ndarray):
-            if v.size == 1:
-                v = v.item()
-            else:
-                v = v.tolist()
-        elif isinstance(v, np.floating):
-            v = float(v)
-        elif isinstance(v, np.integer):
-            v = int(v)
+        #elif isinstance(v, np.ndarray):
+        #    if v.size == 1:
+        #        v = v.item()
+        #    else:
+        #        v = v.tolist()
+        #elif isinstance(v, np.floating):
+        #    v = float(v)
+        #elif isinstance(v, np.integer):
+        #    v = int(v)
         elif not isinstance(v, (bool, numbers.Number)):
             v = str(v)
         toret[k] = v
