@@ -37,7 +37,11 @@ python setup.py develop --user
 
 ## License
 
-**cosmodespipe** is free software distributed under a BSD3 license. For details see the [LICENSE](https://github.com/cosmodesi/desipipe/blob/main/LICENSE).
+**despipe** is free software distributed under a BSD3 license. For details see the [LICENSE](https://github.com/cosmodesi/desipipe/blob/main/LICENSE).
 
 
 ## Acknowledgments
+
+- Inspiration from parsl: https://github.com/Parsl/parsl
+- Inspiration from qdo: https://bitbucket.org/berkeleylab/qdo
+- Stephen Bailey, Julien Guy, Pat McDonald, Martin White for discussions
