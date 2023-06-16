@@ -28,7 +28,9 @@ def test_queue():
         x, y = np.random.uniform(-1, 1, size), np.random.uniform(-1, 1, size)
         return np.sum((x**2 + y**2) < 1.) * 1. / size
 
-    @tm.clone(scheduler=dict(max_workers=1)).python_app
+    tm2 = tm.clone(scheduler=dict(max_workers=1))
+
+    @tm2.python_app
     def average(fractions):
         import numpy as np
         return np.average(fractions) * 4.
