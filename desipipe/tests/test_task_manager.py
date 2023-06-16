@@ -8,10 +8,11 @@ def test_app():
     from desipipe.task_manager import PythonApp
 
     def func(a, b):
+        import numpy as np
         return a * b
 
     app = PythonApp(func)
-    print(app.run((1, 1), {})[2])
+    print(app.run((1, 1), {}))
 
 
 def test_queue():
@@ -53,6 +54,6 @@ def test_cmdline():
 
 if __name__ == '__main__':
 
-    #test_app()
-    test_queue()
+    test_app()
+    #test_queue()
     #test_cmdline()

@@ -6,8 +6,8 @@ environ = Environment('nersc-cosmodesi')
 
 tm = TaskManager(queue=queue, environ=environ)
 
-tm_compute = tm.clone(scheduler=dict(max_workers=10), launcher=dict(nodes=1, processes=64))
-tm_plot = tm.clone(scheduler=dict(max_workers=1), launcher=dict(nodes=1, processes=1))
+tm_compute = tm.clone(scheduler=dict(max_workers=10), provider=dict(mpiprocs_per_worker=64))
+tm_plot = tm.clone(scheduler=dict(max_workers=1), provider=dict(mpiprocs_per_worker=1))
 
 
 @tm_compute.python_app

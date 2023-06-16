@@ -1,6 +1,7 @@
 import os
 import re
 import io
+import sys
 import contextlib
 import time
 import random
@@ -15,6 +16,8 @@ import hashlib
 import inspect
 import glob
 import textwrap
+import copyreg
+import shutil
 
 import sqlite3
 
@@ -38,11 +41,23 @@ task_states = ['WAITING',       # Waiting for requires to finish
 TaskState = type('TaskState', (), {**dict(zip(task_states, task_states)), 'ALL': task_states})
 
 
+
+def reduce_app(self):
+    state = self.__getstate__()
+    state['task_manager'] = state['file'] = None
+    return (self.__class__.__new__, (self.__class__,), state)
+
+
 class QueuePickler(pickle.Pickler):
 
+    def __init__(self, *args, **kwargs):
+        super(QueuePickler, self).__init__(*args, **kwargs)
+        self.dispatch_table = copyreg.dispatch_table.copy()
+        for cls in BaseApp.__subclasses__():
+            self.dispatch_table[cls] = reduce_app
+
     def persistent_id(self, obj):
-        # Instead of pickling MemoRecord as a regular class instance, we emit a
-        # persistent ID.
+        # Instead of pickling obj as a regular class instance, we emit a persistent ID.
         if isinstance(obj, Future):
             # Here, our persistent ID is simply a tuple, containing a tag and a
             # key, which refers to a specific record in the database.
@@ -50,10 +65,9 @@ class QueuePickler(pickle.Pickler):
             ids.append(obj.id)
             setattr(self, 'future_ids', ids)
             return ('Future', obj.id)
-        else:
-            # If obj does not have a persistent ID, return None. This means obj
-            # needs to be pickled as usual.
-            return None
+        # If obj does not have a persistent ID, return None. This means obj
+        # needs to be pickled as usual.
+        return None
 
     @classmethod
     def dumps(cls, obj, *args, **kwargs):
@@ -70,7 +84,7 @@ class QueueUnpickler(pickle.Unpickler):
 
     def persistent_load(self, pid):
         # This method is invoked whenever a persistent ID is encountered.
-        # Here, pid is the tuple returned by DBPickler.
+        # Here, pid is the tuple returned by QueueUnpickler.
         tag, id = pid
         if tag == 'Future':
             # Fetch the referenced record from the database and return it.
@@ -89,7 +103,7 @@ class QueueUnpickler(pickle.Unpickler):
 
 class Task(BaseClass):
 
-    _attrs = ['id', 'app', 'args', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'result', 'dtime']
+    _attrs = ['id', 'app', 'args', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'versions', 'result', 'dtime']
 
     def __init__(self, app, args=None, kwargs=None, id=None, state=None):
         for name in ['jobid', 'err', 'out']:
@@ -140,8 +154,25 @@ class Task(BaseClass):
         return new
 
     def run(self):
+        from .file_manager import File
         t0 = time.time()
-        self.errno, self.result, self.err, self.out = self.app.run(tuple(self.args), self.kwargs)
+
+        def save_attrs(dirname):
+            script_fn = os.path.join(dirname, '{}.py'.format(self.app.name))
+            input_fn = getattr(self.app, 'file', None)
+            if input_fn is not None and os.path.isfile(input_fn):
+                shutil.copyfile(input_fn, script_fn)
+            with open(script_fn, 'w') as file:
+                file.write(self.app.code)
+            versions_fn = os.path.join(dirname, '{}.versions'.format(self.app.name))
+            with open(versions_fn, 'w') as file:
+                for name, version in self.app.versions().items():
+                    file.write('{}={}\n'.format(name, version))
+            return (script_fn, versions_fn)
+
+        File.save_attrs = save_attrs
+        self.errno, self.result, self.err, self.out, self.versions = self.app.run(tuple(self.args), self.kwargs)
+        File.save_attrs = None
         if self.errno:
             if self.errno == signal.SIGTERM:
                 self.state = TaskState.KILLED
@@ -338,7 +369,7 @@ class Queue(BaseClass):
             requires.append(task.require_ids)
             managers.append(task.app.task_manager)
             states.append(task.state)
-            tasks_serialized.append(QueuePickler.dumps(task.clone(app=task.app.clone(task_manager=None))))
+            tasks_serialized.append(QueuePickler.dumps(task))
         query = 'INSERT'
         if replace: query = 'REPLACE'
         query += ' INTO tasks (id, task, state, tmid) VALUES (?,?,?,?)'
@@ -442,7 +473,6 @@ class Queue(BaseClass):
         """
         query = 'SELECT t.id FROM tasks t JOIN requires d ON d.id=t.id WHERE d.require=? AND t.state=?'
         waiting_tasks = self._query([query, (id, TaskState.WAITING)]).fetchall()
-        # print('LOOOL', waiting_tasks)
         for id in waiting_tasks:
             self._update_waiting_task_state(id[0])
 
@@ -457,8 +487,9 @@ class Queue(BaseClass):
         self.state = QueueState.ACTIVE
 
     def delete(self):
-        self.db.close()
-        del self.db
+        if hasattr(self, 'db'):
+            self.db.close()
+            del self.db
         import shutil
         # ignore_errors = True is needed on NFS systems; this might
         # leave a dangling directory, but the sqlite db file itself
@@ -596,8 +627,17 @@ class BaseApp(BaseClass):
             if self.code[0].startswith('@'):
                 self.code = self.code[1:]
             self.code = '\n'.join(self.code)
-        if 'task_manager' in kwargs:
-            self.task_manager = kwargs.pop('task_manager')
+            self.file = None
+            try:
+                self.file = inspect.getfile(self.func)
+                if not os.path.isfile(self.file): self.file = None
+            except:
+                pass
+            #self.imports = {}
+            #for m in re.findall('[\n;\s]*from\s+([^\s.]*)\s+import', self.code) + re.findall('[\n;\s]*import\s+([^\s.]*)\s*', self.code):
+            #    self.imports[m.__name__] = getattr(m, '__version__')
+            if 'task_manager' in kwargs:
+                self.task_manager = kwargs.pop('task_manager')
         if kwargs:
             raise ValueError('Unrecognized arguments {}'.format(kwargs))
 
@@ -610,13 +650,20 @@ class BaseApp(BaseClass):
         return self.task_manager.add(Task(self, args, kwargs))
 
     def __getstate__(self):
-        state = {name: getattr(self, name) for name in ['name', 'code', 'task_manager']}
+        state = {name: getattr(self, name) for name in ['name', 'code', 'file', 'task_manager']}
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
         exec(self.code)
         self.func = locals()[self.name]
+
+
+def select_modules(modules):
+    return set(name.split('.', maxsplit=1)[0] for name in modules if not name.startswith('_'))
+
+
+_modules = select_modules(sys.modules)
 
 
 class PythonApp(BaseApp):
@@ -628,8 +675,18 @@ class PythonApp(BaseApp):
                 result = self.func(*args, **kwargs)
             except Exception as exc:
                 errno = getattr(exc, 'errno', 42)
-                raise exc
-            return errno, result, err.getvalue(), out.getvalue()
+                traceback.print_exc(file=err)
+                #raise exc
+            versions = self.versions()
+            return errno, result, err.getvalue(), out.getvalue(), versions
+
+    def versions(self):
+        versions = {}
+        for name in select_modules(sys.modules) - _modules:
+            try:
+                versions[name] = sys.modules[name].__version__
+            except (KeyError, AttributeError):
+                pass
 
 
 class BashApp(BaseApp):
@@ -639,7 +696,7 @@ class BashApp(BaseApp):
         cmd = self.func(*args, **kwargs)
         proc = subprocess.Popen(cmd.split(' '), shell=True)
         out, err = proc.communicate()
-        return errno, result, err, out
+        return errno, result, err, out, {}
 
 
 class TaskManager(BaseClass):

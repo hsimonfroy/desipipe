@@ -2,6 +2,7 @@ import os
 import re
 import copy
 import itertools
+import tempfile
 
 import yaml
 
@@ -145,7 +146,19 @@ class File(BaseFile):
         return get_filetype(filetype=self.filetype, path=self.rpath).read(*args, **kwargs)
 
     def write(self, *args, **kwargs):
-        return get_filetype(filetype=self.filetype, path=self.rpath).write(*args, **kwargs)
+        save_attrs = getattr(self, 'save_attrs', None)
+        rpath = self.rpath
+        dirname = os.path.dirname(rpath)
+        utils.mkdir(dirname)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            if save_attrs is not None:
+                fns = save_attrs(tmp_dir)
+                for fn in fns:
+                    os.rename(fn, os.path.join(dirname, os.path.relpath(fn, tmp_dir)))
+            path = os.path.join(tmp_dir, 'tmp')
+            toret = get_filetype(filetype=self.filetype, path=path).write(*args, **kwargs)
+            os.rename(path, rpath)
+            return toret
 
 
 class FileDataBase(BaseClass):
