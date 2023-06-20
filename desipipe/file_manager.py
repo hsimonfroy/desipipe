@@ -1,6 +1,7 @@
 import os
 import re
 import copy
+import shutil
 import itertools
 import tempfile
 
@@ -46,10 +47,44 @@ def yaml_parser(string):
 
 
 class BaseFile(BaseClass):
+    """
+    Base class describing file(s), merely used to factorize code of :class:`FileEntry` and :class:`File`.
 
+    Attributes
+    ----------
+    filetype : str, default=''
+        File type, e.g. 'catalog', 'power', etc.
+
+    path : str, default=''
+        Path to file(s). May contain placeholders, e.g. 'data_{tracer}_{region}.fits',
+        with the list of values that ``tracer``, ``region`` may take specified in ``options`` (see below).
+
+    id : str, default=''
+        File (unique) identifier.
+
+    author : str, default=''
+        Who produced this file.
+
+    options : dict, default=dict()
+        Dictionary matching placeholders in ``path`` to the list of values they can take, e.g. {'region': ['NGC', 'SGC']}
+
+    description : str, default=''
+        Plain text describing the file(s).
+    """
     _defaults = dict(filetype='', path='', id='', author='', options=dict(), description='')
 
     def __init__(self, *args, **kwargs):
+        """
+        Initialize :class:`BaseFile`.
+
+        Parameters
+        ----------
+        *args : dict, :class:`BaseFile`
+            Dictionary of (some) attributes (see above) or :class:`BaseFile` instance.
+
+        **kwargs : dict
+            Optionally, more attributes.
+        """
         if len(args) > 1:
             raise ValueError('Cannot take several args')
         if len(args):
@@ -62,25 +97,30 @@ class BaseFile(BaseClass):
         self.update(**kwargs)
 
     def clone(self, **kwargs):
+        """Return an updated copy."""
         new = self.copy()
         new.update(**kwargs)
         return new
 
     def update(self, **kwargs):
+        """Update input attributes."""
         for name, value in kwargs.items():
             if name in self._defaults:
                 setattr(self, name, type(self._defaults[name])(value))
             else:
                 raise ValueError('Unknown argument {}; supports {}'.format(name, list(self._defaults)))
 
-    def as_dict(self):
+    def to_dict(self):
+        """View as a dictionary (of attributes)."""
         return {name: getattr(self, name) for name in self._defaults}
 
     def __repr__(self):
-        return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in self.as_dict()]))
+        """String representation: class name and attributes."""
+        return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in self.to_dict()]))
 
 
 def _make_list(values):
+    """Turn input ``values`` (single value, list, iterator, etc.) into a list."""
     if isinstance(values, range):
         return values
     if not hasattr(values, '__iter__') or isinstance(values, str):
@@ -93,6 +133,7 @@ class FileEntry(BaseFile):
     """Class describing a file entry."""
 
     def update(self, **kwargs):
+        """Update input attributes (options values are turned into lists)."""
         super(FileEntry, self).update(**kwargs)
         if 'options' in kwargs:
             options = {}
@@ -103,21 +144,33 @@ class FileEntry(BaseFile):
             self.options = options
 
     def select(self, **kwargs):
+        """
+        Restrict to input options, e.g.
+
+        >>> entry.select(region=['NGC'])
+
+        returns a new entry, with option 'region' taking values in ``['NGC']``.
+        """
         options = self.options.copy()
         for name, values in kwargs.items():
             if name in options:
+                for value in values:
+                    if value not in options[name]:
+                        raise ValueError('{} is not in option {} ({})'.format(value, name, options[name]))
                 options[name] = values
             else:
                 raise ValueError('Unknown option {}, select from {}'.format(name, list(self['options'].keys())))
         return self.clone(options=options)
 
     def __len__(self):
+        """Length, i.e. number of individual files (looping over all options) described by this file entry."""
         size = 1
         for values in self.options.values():
             size *= len(values)
         return size
 
     def __iter__(self):
+        """Iterate over all files (looping over all options) described by this file entry."""
         for values in itertools.product(*self.options.values()):
             options = {name: values[iname] for iname, name in enumerate(self.options)}
             fi = File()
@@ -128,10 +181,11 @@ class FileEntry(BaseFile):
 
 class File(BaseFile):
 
-    """Class describing one file."""
+    """Class describing a single file (single option values)."""
 
     @property
     def rpath(self):
+        """Real path i.e. replacing placeholders in :attr:`path` by their value."""
         path = self.path
         environ = getattr(self, 'environ', {})
         placeholders = re.finditer(r'\$\{.*?\}', path)
@@ -143,18 +197,23 @@ class File(BaseFile):
         return path.format(**self.options)
 
     def read(self, *args, **kwargs):
+        """Read file from disk."""
         return get_filetype(filetype=self.filetype, path=self.rpath).read(*args, **kwargs)
 
     def write(self, *args, **kwargs):
+        """
+        Write file to disk. First written in a temporary directory, then moved to its final destination.
+        To write additional files, a method :attr:`save_attrs`, that should take the path to the directory as input,
+        can be added to the current instance.
+        """
         save_attrs = getattr(self, 'save_attrs', None)
         rpath = self.rpath
         dirname = os.path.dirname(rpath)
         utils.mkdir(dirname)
         with tempfile.TemporaryDirectory() as tmp_dir:
             if save_attrs is not None:
-                fns = save_attrs(tmp_dir)
-                for fn in fns:
-                    os.rename(fn, os.path.join(dirname, os.path.relpath(fn, tmp_dir)))
+                save_attrs(tmp_dir)
+                shutil.copy_tree(tmp_dir, dirname)
             path = os.path.join(tmp_dir, 'tmp')
             toret = get_filetype(filetype=self.filetype, path=path).write(*args, **kwargs)
             os.rename(path, rpath)
@@ -163,7 +222,7 @@ class File(BaseFile):
 
 class FileDataBase(BaseClass):
 
-    """A collection of file descriptors."""
+    """A collection of file entries."""
 
     def __init__(self, data=None, string=None, parser=None, **kwargs):
         """
@@ -182,7 +241,7 @@ class FileDataBase(BaseClass):
             Function that parses *yaml* string into a dictionary.
             Used when ``data`` is string, or ``string`` is not ``None``.
 
-        kwargs : dict
+        **kwargs : dict
             Arguments for :func:`parser`.
         """
         if isinstance(data, self.__class__):
@@ -206,7 +265,37 @@ class FileDataBase(BaseClass):
 
         self.data = datad
 
-    def select(self, ids=None, keywords=None, prune=False, **kwargs):
+    def select(self, ids=None, keywords=None, **kwargs):
+        """
+        Restrict to input identifiers, keywords, or options, e.g.
+
+        >>> db.select(keywords=['power cutsky', 'fiber'], options={'tracer': 'ELG'})
+
+        selects the data base entries whose description contains 'power' and 'cutsky' or 'fiber',
+        and option 'tracer' is 'ELG'.
+
+        Parameters
+        ----------
+        ids : list, str, default=None
+            List of file entry identifiers.
+            Defaults to all identifiers (no selection).
+
+        keywords : list, str, default=None
+            List of keywords to search for in the file entry descriptions.
+            If a string contains several words, all of them must be in the description
+            for the corresponding file entry to be selected.
+            If a list of strings is provided, any of the strings must be in the description
+            for the corresponding file entry to be selected.
+            e.g. ``['power cutsky', 'fiber']`` selects the data base entries whose description contains 'power' and 'cutsky' or 'fiber'.
+
+        **kwargs : dict
+            Restrict to these options, see :meth:`FileEntry.select`.
+
+        Returns
+        -------
+        new : FileDataBase
+            Selected data base.
+        """
         new = self.__class__()
         if ids is not None:
             ids = _make_list(ids)
@@ -222,38 +311,51 @@ class FileDataBase(BaseClass):
                 if not any(all(kw in description for kw in keyword) for keyword in keywords):
                     continue
             entry = entry.select(**kwargs)
-            if prune and not entry:
+            if not entry:
                 continue
             new.data.append(entry)
         return new
 
     def get(self, *args, **kwargs):
-        new = self.select(*args, prune=True, **kwargs)
-        if len(new) == 1 and len(new[0]):
-            for fi in new[0]:
-                return fi  # File instance
-        raise ValueError('There are {} entries with {} files'.format(len(new), [len(entry) for entry in new]))
+        """
+        Return the :class:`File` instance that matches input arguments, see :meth:`select`.
+        If :meth:`select` returns several file entries, and / or file entries with multiples files,
+        a :class:`ValueError` is raised.
+        """
+        new = self.select(*args, **kwargs)
+        if len(new) == 1 and len(new[0]) == 1:
+            return new[0]  # File instance
+        raise ValueError('"get" is not applicable as there are {} entries with {} files'.format(len(new), [len(entry) for entry in new]))
 
     def __getitem__(self, index):
+        """Return file entry(ies) at the input index(ices) in the list."""
         data = self.data.__getitem__(index)
         if isinstance(data, list):
             return self.__class__(data)
         return data
 
     def __iter__(self):
+        """Iterate over file entries."""
         return iter(self.data)
 
     def __len__(self):
+        """Length, i.e. number of file entries."""
         return len(self.data)
 
     def insert(self, index, entry):
+        """
+        Insert a new file entry, at input index.
+        ``entry`` may be e.g. a dictionary, or a :class:`FileEntry` instance,
+        in which case a shallow copy is made.
+        """
         self.data.insert(index, FileEntry(entry))
 
     def append(self, entry):
+        """Append an input file entry, which may be e.g. a dictionary, or a :class:`FileEntry` instance."""
         self.data.append(FileEntry(entry))
 
     def write(self, fn):
-
+        """Write data base to *yaml* file ``fn``."""
         utils.mkdir(os.path.dirname(fn))
 
         with open(fn, 'w') as file:
@@ -263,10 +365,10 @@ class FileDataBase(BaseClass):
 
             yaml.add_representer(list, list_rep)
 
-            yaml.dump_all([utils.dict_to_yaml(entry.as_dict()) for entry in self], file, default_flow_style=False)
-
+            yaml.dump_all([utils.dict_to_yaml(entry.to_dict()) for entry in self], file, default_flow_style=False)
 
     def __copy__(self):
+        """Return a shallow copy (list is copied)."""
         new = super(FileDataBase, self).__copy__()
         new.data = self.data.copy()
         return new
@@ -289,21 +391,26 @@ class FileDataBase(BaseClass):
 
 class FileManager(BaseClass):
 
+    """File manager, main class to be used to get paths to / read / write files."""
+
     def __init__(self, database=(), environ=None):
         self.db = sum(FileDataBase(database) for database in _make_list(database))
         self.environ = get_environ(environ)
         for entry in self.db:
-            entry.environ = self.environ.as_dict(all=True)
+            entry.environ = self.environ.to_dict(all=True)
 
     def select(self, *args, **kwargs):
+        """Select entries in data base, see :meth:`DataBase.select`."""
         new = self.copy()
         new.db = self.db.select(*args, **kwargs)
         return new
 
     def __len__(self):
+        """Length, i.e. number of file entries."""
         return len(self.db)
 
     def __iter__(self):
+        """Loop over options that are common to all file entries, and yield the (selected) :class:`FileDataBase` instances."""
         if not self.db:
             return []
 
@@ -325,6 +432,6 @@ class FileManager(BaseClass):
             database = FileDataBase()
             for entry in self.db:
                 fi = entry.clone(options={**entry.options, **opt})
-                fi.environ = self.environ.as_dict(all=True)
+                fi.environ = self.environ.to_dict(all=True)
                 database.append(fi)
             yield database

@@ -6,11 +6,22 @@ from .file_manager import yaml_parser
 
 
 class Config(BaseDict):
-
+    """
+    desipipe configuration ('config.yaml') is saved
+    under 'DESIPIPE_CONFIG_DIR' environment variable if defined, else '~/.desipipe'.
+    """
     default_user = getuser()
     home_dir = os.path.expanduser('~')
 
     def __init__(self, user=None):
+        """
+        Read configuration.
+
+        Parameters
+        ----------
+        user : str, default=None
+            User. Defaults to :func`getuser`.
+        """
         if user is None:
             user = self.default_user
         self.user = str(user)
@@ -37,4 +48,5 @@ class Config(BaseDict):
 
     @property
     def queue_dir(self):
+        """Queue directory."""
         return os.path.join(self['base_queue_dir'], self.user)

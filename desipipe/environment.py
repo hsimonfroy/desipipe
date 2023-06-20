@@ -6,17 +6,20 @@ import contextlib
 from .utils import BaseDict
 
 
-def _insert_first(li, first):
+def _insert_first(li, el):
+    # Remove element el from list li if exists,
+    # then add it at the start of li
     while True:
         try:
-            li.remove(first)
+            li.remove(el)
         except ValueError:
             break
-    li.insert(0, first)
+    li.insert(0, el)
     return li
 
 
 def bash_env(command):
+    """Run input command in a subprocess and collect environment variables."""
     import subprocess
     environ = {}
     result = subprocess.run(['bash', '-c', '{} && env'.format(command)], capture_output=True, text=True)
@@ -42,11 +45,25 @@ class RegisteredEnvironment(type(BaseDict)):
 
 
 class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
-
+    """
+    Base environment dictionary-like class.
+    Environment is stored as key, value pairs and an optional extra bash command.
+    """
     name = 'base'
     _defaults = dict()
 
     def __init__(self, data=None, command=None):
+        """
+        Initialize environment.
+
+        Parameters
+        ----------
+        data : dict, default=None
+            Dictionary of environment variables.
+
+        command : str, default=None
+            Optional bash command that sources the environment.
+        """
         self.data = {}
         for name, value in self._defaults.items():
             self.setdefault(name, copy.copy(value))
@@ -55,15 +72,23 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
             self.command = str(command)
         self.update(**(data or {}))
 
-    def as_dict(self, all=False):  # including command
+    def to_dict(self, all=False):  # including command
+        """
+        Return environment as a dictionary.
+        If ``all``, also include environment variables defined by :attr:`command`.
+        """
         new = self.copy()
         if all:
             new.update(bash_env(self.command))
         return dict(new)
 
-    def as_script(self):
+    def to_script(self, all=True):
+        """
+        Export environment as a bash script, including both the command :attr:`command`
+        and variables defined in this instance.
+        """
         toret = ''
-        if self.command:
+        if all and self.command:
             toret += self.command + '\n'
         for name, value in self.items():
             toret += 'export {}={}\n'.format(name, value)
@@ -71,6 +96,28 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
 
 
 def get_environ(environ=None, data=None, **kwargs):
+    """
+    Convenient function that returns an environment.
+
+    Parameters
+    ----------
+    environ : BaseEnvironment, str, dict, default=None
+        A :class:`BaseEnvironment` instance, which is then returned directly,
+        a string specifying the name of the environment (e.g. 'base', 'nersc-cosmodesi')
+        or a dictionary of environment variables.
+        If not specified, the default environment in desipipe's configuration
+        (see :class:`Config`) if provided, else 'base'.
+
+    data : dict, default=None
+        Optionally, additional environment variables.
+
+    **kwargs : dict
+        Optionally, bash command for the environment, see :class:`BaseEnvironment`.
+
+    Returns
+    -------
+    environ : BaseEnvironment
+    """
     if isinstance(environ, BaseEnvironment):
         return environ
     if isinstance(environ, dict):
@@ -128,12 +175,15 @@ def change_environ(environ):
 
 class BaseNERSCEnvironment(BaseEnvironment):
 
+    """Base NERSC environment."""
+
     name = 'nersc-base'
     _defaults = dict(DESICFS='/global/cfs/cdirs/desi')
 
 
 class CosmodesiNERSCEnvironment(BaseNERSCEnvironment):
 
+    """cosmodesi environment at NERSC."""
+
     name = 'nersc-cosmodesi'
-    _defaults = dict(DESICFS='/global/cfs/cdirs/desi')
     _command = 'source /global/cfs/cdirs/desi/users/adematti/cosmodesi_environment.sh main'

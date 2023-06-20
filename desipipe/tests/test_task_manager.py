@@ -17,8 +17,8 @@ def test_app():
 
 def test_queue():
 
-    queue = Queue('test', base_dir='_tests', spawn=1)
-    tm = TaskManager(queue, environ=Environment(), scheduler=dict(max_workers=10))
+    queue = Queue('test', base_dir='_tests', spawn=True)
+    tm = TaskManager(queue, environ=Environment(), scheduler=dict(max_workers=5))
 
     @tm.python_app
     def fraction(size=10000):
@@ -36,7 +36,7 @@ def test_queue():
         return np.average(fractions) * 4.
 
     t0 = time.time()
-    fractions = [fraction(size=1000 + i) for i in range(20)]
+    fractions = [fraction(size=1000 + i) for i in range(5)]
     print(average(fractions).result(), time.time() - t0)
 
 
@@ -56,6 +56,6 @@ def test_cmdline():
 
 if __name__ == '__main__':
 
-    test_app()
-    #test_queue()
+    #test_app()
+    test_queue()
     #test_cmdline()
