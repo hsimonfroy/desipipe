@@ -77,7 +77,7 @@ class QueuePickler(pickle.Pickler):
     def dumps(cls, obj, *args, **kwargs):
         """
         Dump input ``obj`` to string.
-        *args and **kwargs are passed to :meth:`__init__`.
+        args and kwargs are passed to :meth:`__init__`.
         """
         f = io.BytesIO()
         cls(f, *args, **kwargs).dump(obj)
@@ -110,7 +110,7 @@ class QueueUnpickler(pickle.Unpickler):
     def loads(cls, s, *args, **kwargs):
         """
         Load input string ``s``.
-        *args and **kwargs are passed to :meth:`__init__`.
+        args and kwargs are passed to :meth:`__init__`.
         """
         f = io.BytesIO(s)
         return cls(f, *args, **kwargs).load()
@@ -241,8 +241,7 @@ class Task(BaseClass):
         """
         Run task:
 
-        - call :class:`BaseApp.run`, saving main script where the task is defined and package versions in a folder '.desipipe' located
-        in the directory where files are saved (if any).
+        - call :class:`BaseApp.run`, saving main script where the task is defined and package versions in a folder '.desipipe' located in the directory where files are saved (if any).
         - set :attr:`errno`, :attr:`result`, :attr:`err`, :attr:`out`, :attr:`versions` and :attr:`dtime`.
         - set :attr:`state`: 'KILLED' if termination signal, 'FAILED' if :class:`BaseApp.run` raised an excpetion, else 'SUCCEEDED'.
 
@@ -428,7 +427,7 @@ class Queue(BaseClass):
             """
             self.db.executescript(script)
             # Initial queue state is active
-            self.db.execute('INSERT INTO metadata VALUES (?,?)', ('state', QueueState.ACTIVE))
+            self.db.execute('INSERT INTO metadata VALUES (?, ?)', ('state', QueueState.ACTIVE))
             self.db.commit()
         else:
             self.db = sqlite3.Connection(self.fn, timeout=60)
@@ -993,11 +992,13 @@ _modules = select_modules(sys.modules)
 class PythonApp(BaseApp):
     """
     Python application, e.g.:
-    ```
-    @tm.python_app
-    def test(n):
-        print('hello' * n)
-    ```
+
+    .. code-block:: python
+
+        @tm.python_app
+        def test(n):
+            print('hello' * n)
+
     """
     def run(self, args, kwargs):
         """Run app with input ``args`` and ``kwargs``."""
@@ -1025,11 +1026,13 @@ class PythonApp(BaseApp):
 class BashApp(BaseApp):
     """
     Bash application, e.g.:
-    ```
-    @tm.bash_app
-    def test(n):
-        return "echo '{}'".format('hello' * n)
-    ```
+
+    .. code-block:: python
+
+        @tm.bash_app
+        def test(n):
+            return "echo '{}'".format('hello' * n)
+
     """
     def run(self, args, kwargs):
         """Run app with input ``args`` and ``kwargs``."""
@@ -1043,14 +1046,15 @@ class BashApp(BaseApp):
 class TaskManager(BaseClass):
     """
     Task manager, main class to be used in scripts, e.g.:
-    ```
-    queue = Queue('test', base_dir='_tests', spawn=True)
-    tm = TaskManager(queue, environ=Environment(), scheduler=dict(max_workers=10))
 
-    @tm.python_app
-    def test(n):
-        print('hello' * n)
-    ```
+    .. code-block:: python
+
+        queue = Queue('test', base_dir='_tests', spawn=True)
+        tm = TaskManager(queue, environ=Environment(), scheduler=dict(max_workers=10))
+
+        @tm.python_app
+        def test(n):
+            print('hello' * n)
 
     Attributes
     ----------
