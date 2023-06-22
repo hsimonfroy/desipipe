@@ -75,7 +75,7 @@ def get_scheduler(scheduler=None, **kwargs):
     if isinstance(scheduler, BaseScheduler):
         return scheduler
     if isinstance(scheduler, dict):
-        scheduler, kwargs = None, {**scheduler, **kwargs}
+        scheduler, kwargs = scheduler.pop('scheduler', None), {**scheduler, **kwargs}
     if scheduler is None:
         from .config import Config
         scheduler = Config().get('scheduler', 'simple')

@@ -82,16 +82,15 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
             new.update(bash_env(self.command))
         return dict(new)
 
-    def to_script(self, all=True):
+    def to_script(self, sep='\n', all=True):
         """
         Export environment as a bash script, including both the command :attr:`command`
         and variables defined in this instance.
         """
         toret = ''
         if all and self.command:
-            toret += self.command + '\n'
-        for name, value in self.items():
-            toret += 'export {}={}\n'.format(name, value)
+            toret += self.command + sep
+        toret += sep.join(['export {}={}'.format(name, value) for name, value in self.items()])
         return toret
 
 
@@ -121,7 +120,7 @@ def get_environ(environ=None, data=None, **kwargs):
     if isinstance(environ, BaseEnvironment):
         return environ
     if isinstance(environ, dict):
-        environ, data = None, {**environ, **(data or {})}
+        environ, data = environ.pop('environ', None), {**environ, **(data or {})}
     from .config import Config
     config = Config().get('environ', {})
     if environ is None:

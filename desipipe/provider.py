@@ -91,11 +91,13 @@ def get_provider(provider=None, **kwargs):
     -------
     provider : BaseProvider
     """
+    if isinstance(provider, BaseProvider):
+        return provider
+    if isinstance(provider, dict):
+        provider, kwargs = provider.pop('provider', None), {**provider, **kwargs}
     if provider is None:
         from .config import Config
         provider = Config().get('provider', 'local')
-    if isinstance(provider, BaseProvider):
-        return provider
     return BaseProvider._registry[provider](**kwargs)
 
 
@@ -111,7 +113,7 @@ class LocalProvider(BaseProvider):
     mpiprocs_per_worker : int, default=1
         Number of MPI processes per worker.
 
-    mpiexec : str, default='mpiexec -np {mpiprocs:d} {cmd}'
+    mpiexec : str, default='mpiexec -np {mpiprocs:d}'
         Template to run a command with MPI.
     """
     name = 'local'
@@ -120,7 +122,9 @@ class LocalProvider(BaseProvider):
     def __call__(self, cmd, workers=1):
         """Submit input command ``cmd`` on ``workers`` workers."""
         for worker in range(workers):
-            tmp = self.mpiexec.format(mpiprocs=self.mpiprocs_per_worker, cmd=cmd)
+            tmp = cmd
+            if self.mpiprocs_per_worker > 1:
+                tmp = self.mpiexec.format(mpiprocs=self.mpiprocs_per_worker, cmd=tmp)
             # self.processes.append(subprocess.Popen(tmp.split(' ')))
             self.processes.append(subprocess.Popen(tmp.split(' '), start_new_session=True, env={**os.environ, **self.environ.to_dict(all=True)}))
             time.sleep(random.uniform(0.8, 1.2))
@@ -175,7 +179,7 @@ class SlurmProvider(BaseProvider):
         Template to run a command with MPI.
     """
     name = 'slurm'
-    _defaults = dict(account='desi', constraint='cpu', queue='regular', time='01:00:00', nodes_per_worker=1., mpiprocs_per_worker=1,
+    _defaults = dict(account='desi', constraint='cpu', qos='regular', time='01:00:00', nodes_per_worker=1., mpiprocs_per_worker=1,
                      mpiexec='srun -N {nodes:d} -n {mpiprocs:d} --cpu-bind=cores {cmd}')  #, out='out_%x_%j.txt', err='err_%x_%j.txt')
 
     def __call__(self, cmd, workers=1):
@@ -187,20 +191,21 @@ class SlurmProvider(BaseProvider):
             cmd = 'desipipe-mpispawn --nprocs {} {}'.format(' '.join([self.mpiprocs_per_worker] * workers), cmd)
             cmd = self.mpiexec.format(nodes_per_worker=1, mpiprocs_per_worker=1, cmd=cmd)
         else:
-            cmd = [self.mpiexec.format(nodes=self.nodes_per_worker, mpiprocs=self.mpiprocs_per_worker, cmd=cmd)] * workers
-            cmd = ' & '.join(cmd) + '& wait'
-        cmd = self.environ.to_script() + cmd
+            cmd = [self.mpiexec.format(nodes=int(self.nodes_per_worker), mpiprocs=self.mpiprocs_per_worker, cmd=cmd)] * workers
+            cmd = ' & '.join(cmd) + ' & wait'
+        cmd = self.environ.to_script(sep=' ; ') + cmd
         # --parsable to get jobid (optionally, cluster name)
         # -- wrap to pass the job
-        cmd = f'sbatch --account {self.account} --constraint {self.contraint} --queue {self.queue} --time {self.time} --nodes {nodes:d} --parsable --wrap "{cmd}"'
-        proc = subprocess.Popen(cmd.split(' '), shell=True)
+        cmd = ['sbatch', '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', f'"{cmd}"']
+        proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         out, err = proc.communicate()
-        self.processes.append(out.split(',')[0])  # jobid
+        self.processes.append((out.split(',')[0].strip(), workers))  # jobid, workers
 
     def nrunning(self):
         """Number of running workers."""
-        jobids = [line.split()[0] for line in subprocess.check_output(['sqs']).split('\n')]
-        return sum(jobid in jobids for jobid in self.processes)
+        jobids = [line.split()[0].strip() for line in subprocess.run(['sqs'], check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')[1:] if line]
+        # print(self.processes, jobids)
+        return sum(workers * (jobid in jobids) for jobid, workers in self.processes)
 
     def nodes(self, workers=1):
         """
@@ -241,9 +246,9 @@ class NERSCProvider(SlurmProvider):
         """Cost required for input number of workers."""
         nodes = self.nodes(workers=workers)
         if nodes < self.threshold_nodes:
-            return
+            return 0
         # Beyond threshold_nodes, cost increases (longer time in queue)
-        return 2 * (nodes - self.threshold_nodes) + self.threshold_nodes
+        return nodes - self.threshold_nodes
 
 
 import sys

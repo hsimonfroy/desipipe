@@ -124,6 +124,8 @@ class Task(BaseClass):
     ----------
     id : str
         Task unique identifier.
+        It is built from the pickle representation of (:attr:`app`, :attr:`args`, :attr:`kwargs`),
+        such that different tasks have different identifiers (with extremely high probability).
 
     app : BaseApp
         Application.
@@ -164,7 +166,7 @@ class Task(BaseClass):
     """
     _attrs = ['id', 'app', 'args', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'versions', 'result', 'dtime']
 
-    def __init__(self, app, args=None, kwargs=None, id=None, state=None):
+    def __init__(self, app, args=None, kwargs=None, state=None):
         """
         Initialize :class:`Task`.
 
@@ -192,17 +194,21 @@ class Task(BaseClass):
             setattr(self, name, '')
         self.result = None
         self.dtime = None
-        self.update(app=app, args=args, kwargs=kwargs, id=id, state=state)
+        self.update(app=app, args=args, kwargs=kwargs, state=state)
 
     def update(self, **kwargs):
         """Update task with input attributes."""
+        require_id = False
         if 'app' in kwargs:
-            self.app = kwargs['app']
+            self.app = kwargs.pop('app')
+            require_id = True
         if 'args' in kwargs:
             self.args = tuple(kwargs.pop('args'))
+            require_id = True
         if 'kwargs' in kwargs:
             self.kwargs = dict(kwargs.pop('kwargs') or {})
-        require_id = 'id' in kwargs and kwargs['id'] is None
+            require_id = True
+
         if not hasattr(self, 'require_ids') or require_id:
             try:
                 f = io.BytesIO()
@@ -219,13 +225,10 @@ class Task(BaseClass):
                     self.state = TaskState.WAITING
                 else:
                     self.state = TaskState.PENDING
-        if 'id' in kwargs:
-            id = kwargs.pop('id')
-            if require_id:
-                hex = hashlib.md5(uid).hexdigest()
-                id = uuid.UUID(hex=hex)  # unique ID, tied to the given app, args and kwargs
-            self.id = str(id)
-        for name in ['app', 'jobid', 'errno', 'err', 'out', 'result', 'dtime']:
+        if require_id:
+            hex = hashlib.md5(uid).hexdigest()
+            self.id = str(uuid.UUID(hex=hex))  # unique ID, tied to the given app, args and kwargs
+        for name in ['jobid', 'errno', 'err', 'out', 'result', 'dtime']:
             if name in kwargs:
                 setattr(self, name, kwargs.pop(name))
         if kwargs:
@@ -1038,7 +1041,7 @@ class BashApp(BaseApp):
         """Run app with input ``args`` and ``kwargs``."""
         errno, result, out, err = 0, None, '', ''
         cmd = self.func(*args, **kwargs)
-        proc = subprocess.Popen(cmd.split(' '), shell=True)
+        proc = subprocess.Popen(cmd.split(' '), stderr=subprocess.PIPE, stdout=subprocess.PIPE)
         out, err = proc.communicate()
         return errno, result, err, out, {}
 
@@ -1063,6 +1066,8 @@ class TaskManager(BaseClass):
 
     id : str
         Task manager unique identifier.
+        It is built from the pickle representation of (:attr:`environ`, :attr:`scheduler`, :attr:`provider`),
+        such that different task managers have different identifiers (with extremely high probability).
 
     environ : BaseEnvironment
         Tasks are run within this environment.
@@ -1073,7 +1078,7 @@ class TaskManager(BaseClass):
     provider : BaseProvider
         Tasks are executed on the machine with this provider.
     """
-    def __init__(self, queue, id=None, environ=None, scheduler=None, provider=None):
+    def __init__(self, queue, environ=None, scheduler=None, provider=None):
         """
         Initialize :class:`TaskManager`.
 
@@ -1081,11 +1086,6 @@ class TaskManager(BaseClass):
         ----------
         queue : str, Queue
             Queue, see :func:`get_queue`.
-
-        id : str, default=None
-            Unique identifier for task manager.
-            As a default, it is built from the pickle representation of (:attr:`environ`, :attr:`scheduler`, :attr:`provider`),
-            such that different task managers have different identifiers (with extremely high probability).
 
         environ : BaseEnvironment, str, dict, default=None
             Tasks are run within this environment. See :func:`get_environ`.
@@ -1096,21 +1096,20 @@ class TaskManager(BaseClass):
         provider : BaseProvider, str, dict, default=None
             Tasks are executed on the machine with this provider. See :func:`get_provider`.
         """
-        self.update(queue=queue, id=id, environ=environ, scheduler=scheduler, provider=provider)
+        self.update(queue=queue, environ=environ, scheduler=scheduler, provider=provider)
 
     def update(self, **kwargs):
         """Update task manager attributes."""
+        require_id = False
         for name, func in zip(['queue', 'environ', 'scheduler', 'provider'],
                               [get_queue, get_environ, get_scheduler, get_provider]):
             if name in kwargs:
                 setattr(self, name, func(kwargs.pop(name)))
-        if 'id' in kwargs:
-            id = kwargs.pop('id')
-            if id is None:
-                uid = QueuePickler.dumps((self.environ, self.scheduler, self.provider))
-                hex = hashlib.md5(uid).hexdigest()
-                id = uuid.UUID(hex=hex)  # unique ID, tied to the given environ, scheduler, provider
-            self.id = str(id)
+                if name != 'queue': require_id = True
+        if require_id:
+            uid = QueuePickler.dumps((self.environ, self.scheduler, self.provider))
+            hex = hashlib.md5(uid).hexdigest()
+            self.id = str(uuid.UUID(hex=hex))  # unique ID, tied to the given environ, scheduler, provider
         if kwargs:
             raise ValueError('Unrecognized arguments {}'.format(kwargs))
 
@@ -1195,22 +1194,24 @@ def spawn(queue, timeout=1e4, timestep=1.):
     queues = [queue] if isinstance(queue, Queue) else queue
     t0 = time.time()
     stop = False
+    managers = [queue.managers() for queue in queues]  # get once, to avoid unpickling manager for each task
     while True:
         if (time.time() - t0) > timeout:
             break
         if all(queue.paused for queue in queues) or stop:
             break
         stop = True
-        for queue in queues:
+        for iq, queue in enumerate(queues):
             if queue.paused:
                 continue
-            for manager in queue.managers():
+            for manager in managers[iq]:
                 ntasks = queue.counts(tmid=manager.id, state=TaskState.PENDING)
                 # for task in queue.tasks():
                 #     print(task.state, getattr(task, 'err', None))
                 if ntasks: stop = False
-                #print('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id))
+                # print('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id))
                 # manager.spawn('desipipe work --queue {}'.format(queue.fn), ntasks=ntasks)
+                # print('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id))
                 manager.spawn('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id), ntasks=ntasks)
         time.sleep(timestep * random.uniform(0.8, 1.2))
 

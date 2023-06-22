@@ -17,8 +17,10 @@ def test_app():
 
 def test_queue():
 
-    queue = Queue('test', base_dir='_tests', spawn=True)
-    tm = TaskManager(queue, environ=Environment(), scheduler=dict(max_workers=5))
+    spawn = False
+    queue = Queue('test', base_dir='_tests', spawn=spawn)
+    tm = TaskManager(queue, environ=dict(), scheduler=dict(max_workers=5), provider=dict(time='00:10:00'))
+    tm2 = tm.clone(scheduler=dict(max_workers=1), provider=dict(provider='local'))
 
     @tm.python_app
     def fraction(size=10000):
@@ -28,8 +30,6 @@ def test_queue():
         x, y = np.random.uniform(-1, 1, size), np.random.uniform(-1, 1, size)
         return np.sum((x**2 + y**2) < 1.) * 1. / size
 
-    tm2 = tm.clone(scheduler=dict(max_workers=1))
-
     @tm2.python_app
     def average(fractions):
         import numpy as np
@@ -37,7 +37,9 @@ def test_queue():
 
     t0 = time.time()
     fractions = [fraction(size=1000 + i) for i in range(5)]
-    print(average(fractions).result(), time.time() - t0)
+    res = average(fractions)
+    if spawn:
+        print(res.result(), time.time() - t0)
 
 
 def test_cmdline():
