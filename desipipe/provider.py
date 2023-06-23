@@ -196,10 +196,9 @@ class SlurmProvider(BaseProvider):
         cmd = self.environ.to_script(sep=' ; ') + cmd
         # --parsable to get jobid (optionally, cluster name)
         # -- wrap to pass the job
-        cmd = ['sbatch', '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', f'"{cmd}"']
-        proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        out, err = proc.communicate()
-        self.processes.append((out.split(',')[0].strip(), workers))  # jobid, workers
+        cmd = ['sbatch', '--output=/dev/null', '--error=/dev/null', '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', f'"{cmd}"']
+        proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.processes.append((proc.stdout.split(',')[0].strip(), workers))  # jobid, workers
 
     def nrunning(self):
         """Number of running workers."""

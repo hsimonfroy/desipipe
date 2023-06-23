@@ -116,7 +116,7 @@ class BaseFile(BaseClass):
 
     def __repr__(self):
         """String representation: class name and attributes."""
-        return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in self.to_dict()]))
+        return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in self.to_dict().items()]))
 
 
 def _make_list(values):
@@ -159,7 +159,7 @@ class FileEntry(BaseFile):
                         raise ValueError('{} is not in option {} ({})'.format(value, name, options[name]))
                 options[name] = values
             else:
-                raise ValueError('Unknown option {}, select from {}'.format(name, list(self['options'].keys())))
+                raise ValueError('Unknown option {}, select from {}'.format(name, list(self.options.keys())))
         return self.clone(options=options)
 
     def __len__(self):
@@ -213,11 +213,16 @@ class File(BaseFile):
         with tempfile.TemporaryDirectory() as tmp_dir:
             if save_attrs is not None:
                 save_attrs(tmp_dir)
-                shutil.copy_tree(tmp_dir, dirname)
-            path = os.path.join(tmp_dir, 'tmp')
+            path = os.path.join(tmp_dir, os.path.basename(rpath))
             toret = get_filetype(filetype=self.filetype, path=path).write(*args, **kwargs)
-            os.rename(path, rpath)
+            shutil.copytree(tmp_dir, dirname, dirs_exist_ok=True)
             return toret
+
+    def __repr__(self):
+        """String representation: class name and attributes."""
+        di = self.to_dict()
+        di['path'] = self.rpath
+        return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
 
 
 class FileDataBase(BaseClass):
@@ -265,7 +270,58 @@ class FileDataBase(BaseClass):
 
         self.data = datad
 
-    def select(self, ids=None, keywords=None, **kwargs):
+    def index(self, id=None, keywords=None, **kwargs):
+        """
+        Return indices for input identifiers, keywords, or options, e.g.
+
+        >>> db.index(keywords=['power cutsky', 'fiber'], options={'tracer': 'ELG'})
+
+        selects the index of data base entries whose description contains 'power' and 'cutsky' or 'fiber',
+        and option 'tracer' is 'ELG'.
+
+        Parameters
+        ----------
+        id : list, str, default=None
+            List of file entry identifiers.
+            Defaults to all identifiers (no selection).
+
+        keywords : list, str, default=None
+            List of keywords to search for in the file entry descriptions.
+            If a string contains several words, all of them must be in the description
+            for the corresponding file entry to be selected.
+            If a list of strings is provided, any of the strings must be in the description
+            for the corresponding file entry to be selected.
+            e.g. ``['power cutsky', 'fiber']`` selects the data base entries whose description contains 'power' and 'cutsky' or 'fiber'.
+
+        **kwargs : dict
+            Restrict to these options, see :meth:`FileEntry.select`.
+
+        Returns
+        -------
+        index : list
+            List of indices.
+        """
+        if id is not None:
+            id = _make_list(id)
+            id = [iid.lower() for iid in id]
+        if keywords is not None:
+            keywords = _make_list(keywords)
+            keywords = [keyword.split() for keyword in keywords]
+        index = []
+        for ientry, entry in enumerate(self.data):
+            if id is not None and entry.id.lower() not in id:
+                continue
+            if keywords is not None:
+                description = entry.description.lower()
+                if not any(all(kw in description for kw in keyword) for keyword in keywords):
+                    continue
+            entry = entry.select(**kwargs)
+            if not entry:
+                continue
+            index.append(ientry)
+        return index
+
+    def select(self, id=None, keywords=None, **kwargs):
         """
         Restrict to input identifiers, keywords, or options, e.g.
 
@@ -276,7 +332,7 @@ class FileDataBase(BaseClass):
 
         Parameters
         ----------
-        ids : list, str, default=None
+        id : list, str, default=None
             List of file entry identifiers.
             Defaults to all identifiers (no selection).
 
@@ -296,25 +352,7 @@ class FileDataBase(BaseClass):
         new : FileDataBase
             Selected data base.
         """
-        new = self.__class__()
-        if ids is not None:
-            ids = _make_list(ids)
-            ids = [iid.lower() for iid in ids]
-        if keywords is not None:
-            keywords = _make_list(keywords)
-            keywords = [keyword.split() for keyword in keywords]
-        for entry in self.data:
-            if ids is not None and entry.id.lower() not in ids:
-                continue
-            if keywords is not None:
-                description = entry.description.lower()
-                if not any(all(kw in description for kw in keyword) for keyword in keywords):
-                    continue
-            entry = entry.select(**kwargs)
-            if not entry:
-                continue
-            new.data.append(entry)
-        return new
+        return self[self.index(id=id, keywords=keywords, **kwargs)]
 
     def get(self, *args, **kwargs):
         """
@@ -324,15 +362,26 @@ class FileDataBase(BaseClass):
         """
         new = self.select(*args, **kwargs)
         if len(new) == 1 and len(new[0]) == 1:
-            return new[0]  # File instance
+            for fi in new[0]:
+                return fi  # File instance
         raise ValueError('"get" is not applicable as there are {} entries with {} files'.format(len(new), [len(entry) for entry in new]))
 
     def __getitem__(self, index):
         """Return file entry(ies) at the input index(ices) in the list."""
-        data = self.data.__getitem__(index)
+        if utils.is_sequence(index):
+            data = [self.data.__getitem__(ii) for ii in index]
+        else:
+            data = self.data.__getitem__(index)
         if isinstance(data, list):
             return self.__class__(data)
         return data
+
+    def __delitem__(self, index):
+        """Delete file entry(ies) at the input index(ices) in the list."""
+        if not utils.is_sequence(index):
+            index = [index]
+        for ii in index:
+            self.data.__delitem__(ii)
 
     def __iter__(self):
         """Iterate over file entries."""
@@ -394,7 +443,8 @@ class FileManager(BaseClass):
     """File manager, main class to be used to get paths to / read / write files."""
 
     def __init__(self, database=(), environ=None):
-        self.db = sum(FileDataBase(database) for database in _make_list(database))
+        self.db = FileDataBase()
+        for db in _make_list(database): self.db += FileDataBase(db)
         self.environ = get_environ(environ)
         for entry in self.db:
             entry.environ = self.environ.to_dict(all=True)

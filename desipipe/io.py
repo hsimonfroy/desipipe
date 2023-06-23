@@ -1,3 +1,7 @@
+"""To implement a new file format, just subclass :class:`BaseFile`."""
+
+import os
+
 from . import utils
 from .utils import BaseClass
 
@@ -55,6 +59,23 @@ def get_filetype(filetype, path, *args, **kwargs):
     if isinstance(filetype, BaseFile):
         return filetype
     return BaseFile._registry[filetype](path, *args, **kwargs)
+
+
+class TextFile(BaseFile):
+
+    """Text file."""
+    name = 'text'
+
+    def read(self):
+        """Read file."""
+        with open(self.path, 'r') as file:
+            return file.read()
+
+    def write(self, txt):
+        """Write file."""
+        utils.mkdir(os.path.dirname(txt))
+        with open(self.path, 'w') as file:
+            file.write(txt)
 
 
 class CatalogFile(BaseFile):

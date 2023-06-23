@@ -29,11 +29,11 @@ from .scheduler import get_scheduler
 from .provider import get_provider
 
 
-task_states = ['WAITING',       # Waiting for requires to finish
+task_states = ['WAITING',       # Waiting for requirements (other tasks) to finish
                'PENDING',       # Eligible to be selected and run
                'RUNNING',       # Running right now
-               'SUCCEEDED',     # Finished with err code = 0
-               'FAILED',        # Finished with err code != 0
+               'SUCCEEDED',     # Finished with errno = 0
+               'FAILED',        # Finished with errno != 0
                'KILLED',        # Finished with SIGTERM (eg Slurm job timeout)
                'UNKNOWN']       # Something went wrong and we lost track
 
@@ -252,14 +252,16 @@ class Task(BaseClass):
         from .file_manager import File
         t0 = time.time()
 
-        def save_attrs(dirname):
+        def save_attrs(file, dirname):
             dirname = os.path.join(dirname, '.desipipe')
-            script_fn = os.path.join(dirname, '{}.py'.format(self.app.name))
+            utils.mkdir(dirname)
             input_fn = getattr(self.app, 'file', None)
+            script_fn = os.path.join(dirname, '{}.py'.format(self.app.name))
             if input_fn is not None and os.path.isfile(input_fn):
                 shutil.copyfile(input_fn, script_fn)
-            with open(script_fn, 'w') as file:
-                file.write(self.app.code)
+            else:
+                with open(script_fn, 'w') as file:
+                    file.write(self.app.code)
             versions_fn = os.path.join(dirname, '{}.versions'.format(self.app.name))
             with open(versions_fn, 'w') as file:
                 for name, version in self.app.versions().items():
@@ -301,9 +303,12 @@ class Future(BaseClass):
         self.queue = queue
         self.id = str(id)
 
-    def result(self, timeout=1e4, timestep=1.):
+
+def _make_getter(name):
+
+    def getter(self, timeout=1e4, timestep=1.):
         """
-        Return task result.
+        Return task {0}.
 
         Parameters
         ----------
@@ -315,23 +320,30 @@ class Future(BaseClass):
 
         Returns
         -------
-        result : object
+        {0} : object
             Value returned by :class:`BaseApp.func`.
-        """
+        """.format(name)
         t0 = time.time()
         try:
-            return self._result
+            return getattr(self, '_' + name)
         except AttributeError:
             while True:
                 if (time.time() - t0) < timeout:
                     if self.queue.tasks(id=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING):
                         # print(self.queue.tasks(self.id)[0].err)
-                        self._result = self.queue.tasks(id=self.id).result
-                        return self._result
+                        tmp = getattr(self.queue.tasks(id=self.id), name)
+                        setattr(self, '_' + name, tmp)
+                        return tmp
                     time.sleep(timestep * random.uniform(0.8, 1.2))
                 else:
-                    self.log_error('time out while getting result')
+                    self.log_error('time out while getting {}'.format(name))
                     return None
+
+    return getter
+
+
+for name in ['result', 'err', 'out']:
+    setattr(Future, name, _make_getter(name))
 
 
 queue_states = ['ACTIVE', 'PAUSED']
@@ -569,7 +581,9 @@ class Queue(BaseClass):
         self.db.commit()
         self._release_lock()
         for id, state in zip(ids, states):
-            if state in (TaskState.SUCCEEDED, TaskState.FAILED):
+            if state == TaskState.WAITING:
+                self._update_waiting_task_state(id=id)
+            elif state in (TaskState.SUCCEEDED, TaskState.FAILED):
                 self._update_waiting_tasks(id)
         if isscalar:
             return futures[0]
@@ -744,7 +758,7 @@ class Queue(BaseClass):
                 toret.append(task_manager)
                 continue
             task = QueueUnpickler.loads(task, queue=self)
-            task.update(id=id, state=state)
+            task.update(state=state)
             task.app.task_manager = task_manager
             toret.append(task)
         if one:
@@ -1012,7 +1026,7 @@ class PythonApp(BaseApp):
             except Exception as exc:
                 errno = getattr(exc, 'errno', 42)
                 traceback.print_exc(file=err)
-                #raise exc
+                # raise exc
             versions = self.versions()
             return errno, result, err.getvalue(), out.getvalue(), versions
 
@@ -1024,6 +1038,7 @@ class PythonApp(BaseApp):
                 versions[name] = sys.modules[name].__version__
             except (KeyError, AttributeError):
                 pass
+        return versions
 
 
 class BashApp(BaseApp):
@@ -1041,7 +1056,7 @@ class BashApp(BaseApp):
         """Run app with input ``args`` and ``kwargs``."""
         errno, result, out, err = 0, None, '', ''
         cmd = self.func(*args, **kwargs)
-        proc = subprocess.Popen(cmd.split(' '), stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True, shell=False)
         out, err = proc.communicate()
         return errno, result, err, out, {}
 
@@ -1164,13 +1179,12 @@ def work(queue, tmid=None, id=None, mpicomm=None):
         # print(queue.summary(), queue.counts(state='PENDING'))
         if mpicomm.rank == 0:
             task = queue.pop(tmid=tmid, id=id)
-        # print(task, queue.counts(state=TaskState.PENDING))
         task = mpicomm.bcast(task, root=0)
         if task is None:
             break
         task.run()
+        # print(task.out)
         # task.update(jobid=environ.get('DESIPIPE_JOBID', ''))
-        # print(task.state, task.result)
         if mpicomm.rank == 0:
             queue.add(task, replace=True)
 
@@ -1205,14 +1219,12 @@ def spawn(queue, timeout=1e4, timestep=1.):
             if queue.paused:
                 continue
             for manager in managers[iq]:
-                ntasks = queue.counts(tmid=manager.id, state=TaskState.PENDING)
-                # for task in queue.tasks():
-                #     print(task.state, getattr(task, 'err', None))
-                if ntasks: stop = False
-                # print('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id))
-                # manager.spawn('desipipe work --queue {}'.format(queue.fn), ntasks=ntasks)
-                # print('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id))
-                manager.spawn('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id), ntasks=ntasks)
+                ntasks = queue.counts(tmid=manager.id, state=TaskState.PENDING) + queue.counts(tmid=manager.id, state=TaskState.WAITING)
+                # print(ntasks, queue.summary())
+                if ntasks:
+                    stop = False
+                    # print('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id))
+                    manager.spawn('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id), ntasks=ntasks)
         time.sleep(timestep * random.uniform(0.8, 1.2))
 
 
@@ -1301,15 +1313,18 @@ def action_from_args(action='work', args=None):
         parser.add_argument('-q', '--queue', type=str, required=True, help='Name of queue; user/queue to select user != {}'.format(Config.default_user))
         parser.add_argument('--tmid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--id', type=str, required=False, default=None, help='Task ID')
-        parser.add_argument('--state', type=str, required=False, default=TaskState.FAILED, choices=TaskState.ALL, help='Task state')
+        parser.add_argument('--state', nargs='*', type=str, required=False, default=TaskState.ALL, choices=TaskState.ALL, help='Task state')
         args = parser.parse_args(args=args)
         if '*' in args.queue:
             raise ValueError('Provide single queue!')
-        logger.info('Tasks that are {}:'.format(args.state))
-        for task in get_queue(args.queue, create=False).tasks(state=args.state, tmid=args.tmid, id=args.id):
-            for name in ['jobid', 'errno', 'err', 'out']:
-                logger.info('{}: {}'.format(name, getattr(task, name)))
-            logger.info('=' * 20)
+        for state in args.state:
+            tasks = get_queue(args.queue, create=False).tasks(state=state, tmid=args.tmid, id=args.id)
+            if tasks:
+                logger.info('Tasks that are {}:'.format(state))
+                for task in tasks:
+                    for name in ['jobid', 'errno', 'err', 'out']:
+                        logger.info('{}: {}'.format(name, getattr(task, name)))
+                    logger.info('=' * 20)
         return
 
     parser.add_argument('-q', '--queue', nargs='*', type=str, required=True, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
