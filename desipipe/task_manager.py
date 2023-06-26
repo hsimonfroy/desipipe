@@ -185,11 +185,9 @@ class Task(BaseClass):
             Task state. Defaults to 'WAITING' if this task requires others to be run,
             else to 'PENDING'.
         """
-        for name in ['jobid', 'err', 'out']:
-            setattr(self, name, '')
         self.result = None
         self.dtime = None
-        self.update(app=app, args=args, kwargs=kwargs, state=state)
+        self.update(app=app, args=args, kwargs=kwargs, state=state, jobid='', errno=None, err='', out='')
 
     def update(self, **kwargs):
         """Update task with input attributes."""
@@ -688,8 +686,11 @@ class Queue(BaseClass):
         if hasattr(self, 'db'):
             self.db.close()
             del self.db
-        import shutil
-        shutil.rmtree(self.base_dir, ignore_errors=True)
+        try:
+            os.remove(self.fn)
+        except OSError:
+            pass
+
 
     def tasks(self, tid=None, mid=None, state=None, one=None, property=None):
         """
@@ -1148,7 +1149,7 @@ class TaskManager(BaseClass):
         self.scheduler(*args, **kwargs)
 
 
-def work(queue, mid=None, tid=None, mpicomm=None):
+def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
     """
     Do the actual work: pop tasks from the input queue, and run them.
 
@@ -1169,6 +1170,11 @@ def work(queue, mid=None, tid=None, mpicomm=None):
     if mpicomm is None:
         from mpi4py import MPI
         mpicomm = MPI.COMM_WORLD
+    if mpisplits is not None:
+        for isplit in range(mpisplits):
+            if (mpicomm.size * isplit // mpisplits) <= mpicomm.rank < (mpicomm.size * (isplit + 1) // mpisplits):
+                color = isplit
+        mpicomm = mpicomm.Split(color, 0)
     while True:
         task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
@@ -1298,10 +1304,11 @@ def action_from_args(action='work', args=None):
         parser.add_argument('-q', '--queue', type=str, required=True, help='Name of queue; user/queue to select user != {}'.format(Config.default_user))
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
+        parser.add_argument('--mpisplits', type=int, required=False, default=None, help='Number of MPI splits')
         args = parser.parse_args(args=args)
         if '*' in args.queue:
             raise ValueError('Provide single queue!')
-        return work(get_queue(args.queue, create=False), mid=args.mid, tid=args.tid)
+        return work(get_queue(args.queue, create=False), mid=args.mid, tid=args.tid, mpisplits=args.mpisplits)
 
     if action == 'tasks':
 
@@ -1317,8 +1324,10 @@ def action_from_args(action='work', args=None):
             if tasks:
                 logger.info('Tasks that are {}:'.format(state))
                 for task in tasks:
-                    for name in ['jobid', 'errno', 'err', 'out']:
-                        logger.info('{}: {}'.format(name, getattr(task, name)))
+                    logger.info('app: {}'.format(task.app.name))
+                    if task.errno is not None:
+                        for name in ['jobid', 'errno', 'err', 'out']:
+                            logger.info('{}: {}'.format(name, getattr(task, name)))
                     logger.info('=' * 20)
         return
 

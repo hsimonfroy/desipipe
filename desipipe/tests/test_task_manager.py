@@ -25,7 +25,7 @@ def test_queue():
     queue = Queue('test', base_dir=base_dir, spawn=spawn)
     provider = None
     if os.getenv('NERSC_HOST', None):
-        provider = dict(time='00:10:00')
+        provider = dict(time='00:02:00', nodes_per_worker=0.1)
     tm = TaskManager(queue, environ=dict(), scheduler=dict(max_workers=2), provider=provider)
     tm2 = tm.clone(scheduler=dict(max_workers=1), provider=dict(provider='local'))
 
@@ -80,10 +80,10 @@ def test_file():
     fm.db.append(fm.db[0].clone(id='output', path=os.path.join(base_dir, 'hello_out_{i:d}.txt')))
 
     spawn = True
-    queue = Queue('test', base_dir=base_dir, spawn=spawn)
+    queue = Queue('test2', base_dir=base_dir, spawn=spawn)
     provider = None
     if os.getenv('NERSC_HOST', None):
-        provider = dict(time='00:10:00')
+        provider = dict(time='00:02:00', nodes_per_worker=0.1)
     tm = TaskManager(queue, environ=dict(), scheduler=dict(max_workers=2), provider=provider)
 
     @tm.python_app

@@ -18,11 +18,12 @@ def _insert_first(li, el):
     return li
 
 
-def bash_env(command):
+def bash_env(cmd):
     """Run input command in a subprocess and collect environment variables."""
     import subprocess
     environ = {}
-    result = subprocess.run(['bash', '-c', '{} && env'.format(command)], capture_output=True, text=True)
+    print(cmd)
+    result = subprocess.run(['bash', '-c', '{} && env'.format(cmd)], capture_output=True, text=True)
     for line in result.stdout.split('\n'):
         try:
             key, value = line.split('=')

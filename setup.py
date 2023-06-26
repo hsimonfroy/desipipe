@@ -20,5 +20,5 @@ setup(name=package_basename,
       install_requires=['pyyaml', 'mpi4py'],
       extras_require={},
       packages=find_packages(),
-      entry_points={'console_scripts': ['desipipe = desipipe.__main__:main', 'desipipe-mpispawn = desipipe.provider:mpi_spawn'],
+      entry_points={'console_scripts': ['desipipe = desipipe.__main__:main'],
     })

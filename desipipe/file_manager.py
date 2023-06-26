@@ -446,8 +446,9 @@ class FileManager(BaseClass):
         self.db = FileDataBase()
         for db in _make_list(database): self.db += FileDataBase(db)
         self.environ = get_environ(environ)
+        environ = self.environ.to_dict(all=True)
         for entry in self.db:
-            entry.environ = self.environ.to_dict(all=True)
+            entry.environ = environ
 
     def select(self, *args, **kwargs):
         """Select entries in data base, see :meth:`DataBase.select`."""
@@ -477,11 +478,12 @@ class FileManager(BaseClass):
 
         for entry in self.db:
             options = _intersect(options, entry.options)
+        environ = self.environ.to_dict(all=True)
         for values in itertools.product(*options.values()):
             opt = {name: values[iname] for iname, name in enumerate(options)}
             database = FileDataBase()
             for entry in self.db:
                 fi = entry.clone(options={**entry.options, **opt})
-                fi.environ = self.environ.to_dict(all=True)
+                fi.environ = environ
                 database.append(fi)
             yield database
