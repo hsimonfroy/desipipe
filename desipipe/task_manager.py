@@ -96,10 +96,10 @@ class QueueUnpickler(pickle.Unpickler):
     def persistent_load(self, pid):
         # This method is invoked whenever a persistent ID is encountered.
         # Here, pid is the tuple returned by QueueUnpickler.
-        tag, id = pid
+        tag, tid = pid
         if tag == 'Future':
             # Fetch the referenced record from the database and return it.
-            return self.queue[id].result
+            return self.queue[tid].result
         else:
             # Always raises an error if you cannot return the correct object.
             # Otherwise, the unpickler will think None is the object referenced
@@ -180,11 +180,6 @@ class Task(BaseClass):
 
         kwargs : dict, default=None
             Dictionary of arguments to be passed to :meth:`BaseApp.run`.
-
-        id : str, default=None
-            Unique identifier for task.
-            As a default, it is built from the pickle representation of (:attr:`app`, :attr:`args`, :attr:`kwargs`),
-            such that different tasks have different identifiers (with extremely high probability).
 
         state : str, default=None
             Task state. Defaults to 'WAITING' if this task requires others to be run,
@@ -286,9 +281,9 @@ class Task(BaseClass):
 
 class Future(BaseClass):
 
-    """Structure that keeps track of :class:`Task` result (searching in the :attr:`queue`, with given :attr:`id`)."""
+    """Structure that keeps track of :class:`Task` result (searching in the :attr:`queue`, with given :attr:`tid`)."""
 
-    def __init__(self, queue, id):
+    def __init__(self, queue, tid):
         """
         Initialize :class:`Future`.
 
@@ -297,11 +292,11 @@ class Future(BaseClass):
         queue : Queue
             Queue where the associated :class:`Task` is saved.
 
-        id : str
+        tid : str
             :attr:`Task.id`.
         """
         self.queue = queue
-        self.id = str(id)
+        self.id = str(tid)
 
 
 def _make_getter(name):
@@ -329,9 +324,9 @@ def _make_getter(name):
         except AttributeError:
             while True:
                 if (time.time() - t0) < timeout:
-                    if self.queue.tasks(id=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING):
+                    if self.queue.tasks(tid=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING):
                         # print(self.queue.tasks(self.id)[0].err)
-                        tmp = getattr(self.queue.tasks(id=self.id), name)
+                        tmp = getattr(self.queue.tasks(tid=self.id), name)
                         setattr(self, '_' + name, tmp)
                         return tmp
                     time.sleep(timestep * random.uniform(0.8, 1.2))
@@ -414,25 +409,25 @@ class Queue(BaseClass):
             # Create tables
             script = """
             CREATE TABLE tasks (
-                id       TEXT PRIMARY KEY,
+                tid       TEXT PRIMARY KEY,
                 task     TEXT,
                 state    TEXT,
-                tmid     TEXT  -- task manager id
+                mid     TEXT  -- task manager id
             );
             -- Dependencies table.  Multiple entries for multiple deps.
             CREATE TABLE requires (
-                id      TEXT,     -- task.id foreign key
+                tid      TEXT,     -- task.id foreign key
                 require TEXT,     -- task.id that it depends upon
             -- Add foreign key constraints
-                FOREIGN KEY(id) REFERENCES tasks(id),
-                FOREIGN KEY(require) REFERENCES tasks(id)
+                FOREIGN KEY(tid) REFERENCES tasks(tid),
+                FOREIGN KEY(require) REFERENCES tasks(tid)
             );
             -- Task manager table
             CREATE TABLE managers (
-                tmid    TEXT PRIMARY KEY, -- task manager id foreign key
+                mid    TEXT PRIMARY KEY, -- task manager id foreign key
                 manager TEXT,             -- task manager
             -- Add foreign key constraints
-                FOREIGN KEY(tmid) REFERENCES tasks(tmid)
+                FOREIGN KEY(mid) REFERENCES tasks(mid)
             );
             -- Metadata about this queue, e.g. active/paused
             CREATE TABLE metadata (
@@ -509,29 +504,29 @@ class Queue(BaseClass):
                 else:
                     raise exc
 
-    def _add_requires(self, id, requires):
+    def _add_requires(self, tid, requires):
         """
         Add requirements for a task.
 
         Parameters
         ----------
-        id : str
+        tid : str
             Task ID.
 
         requires : list
             List of IDs upon which this task depends.
         """
-        query = 'INSERT OR REPLACE INTO requires (id, require) VALUES (?, ?)'
+        query = 'INSERT OR REPLACE INTO requires (tid, require) VALUES (?, ?)'
         if isinstance(requires, str):
-            self._query([query, (id, requires)])
+            self._query([query, (tid, requires)])
         else:
-            args = [(id, x) for x in requires]
+            args = [(tid, x) for x in requires]
             self._query([query, args], many=True)
         self.db.commit()
 
     def _add_manager(self, manager):
         # """Add input :class:`TaskManager` to the data base (or replace if already there, as specified by :attr:`TaskManager.id`)."""
-        query = 'INSERT OR REPLACE INTO managers (tmid, manager) VALUES (?, ?)'
+        query = 'INSERT OR REPLACE INTO managers (mid, manager) VALUES (?, ?)'
         self._query([query, (manager.id, QueuePickler.dumps(manager))])
         self.db.commit()
 
@@ -559,9 +554,9 @@ class Queue(BaseClass):
             tasks = [tasks]
         ids, requires, managers, states, tasks_serialized, futures = [], [], [], [], [], []
         for task in tasks:
-            futures.append(Future(queue=self, id=task.id))
+            futures.append(Future(queue=self, tid=task.id))
             if replace is None:
-                row = self._query(['SELECT COUNT(id) FROM tasks WHERE id=?', (task.id,)]).fetchone()
+                row = self._query(['SELECT COUNT(tid) FROM tasks WHERE tid=?', (task.id,)]).fetchone()
                 if row is not None and row[0]: continue
             ids.append(task.id)
             requires.append(task.require_ids)
@@ -570,21 +565,21 @@ class Queue(BaseClass):
             tasks_serialized.append(QueuePickler.dumps(task))
         query = 'INSERT'
         if replace: query = 'REPLACE'
-        query += ' INTO tasks (id, task, state, tmid) VALUES (?,?,?,?)'
+        query += ' INTO tasks (tid, task, state, mid) VALUES (?,?,?,?)'
         self._get_lock()
         self._query([query, zip(ids, tasks_serialized, states, [tm.id for tm in managers])], many=True)
         if not replace:
-            for id, requires in zip(ids, requires):
-                self._add_requires(id, requires)
+            for tid, requires in zip(ids, requires):
+                self._add_requires(tid, requires)
             for manager in managers:
                 self._add_manager(manager)
         self.db.commit()
         self._release_lock()
-        for id, state in zip(ids, states):
+        for tid, state in zip(ids, states):
             if state == TaskState.WAITING:
-                self._update_waiting_task_state(id=id)
+                self._update_waiting_task_state(tid=tid)
             elif state in (TaskState.SUCCEEDED, TaskState.FAILED):
-                self._update_waiting_tasks(id)
+                self._update_waiting_tasks(tid)
         if isscalar:
             return futures[0]
         return futures
@@ -632,23 +627,23 @@ class Queue(BaseClass):
         """Resume queue, i.e. set state to 'ACTIVE'."""
         self.state = QueueState.ACTIVE
 
-    def set_task_state(self, id, state):
-        """Set the state of task with input ID ``id`` to ``state``."""
+    def set_task_state(self, tid, state):
+        """Set the state of task with input ID ``tid`` to ``state``."""
         try:
             self._get_lock()
-            query = 'UPDATE tasks SET state=? WHERE id=?'
-            self._query([query, (state, id)])
+            query = 'UPDATE tasks SET state=? WHERE tid=?'
+            self._query([query, (state, tid)])
             self.db.commit()
 
             if state in (TaskState.SUCCEEDED, TaskState.FAILED):
-                self._update_waiting_tasks(id)
+                self._update_waiting_tasks(tid)
 
         finally:
             self._release_lock()
 
-    def _update_waiting_task_state(self, id, force=False):
+    def _update_waiting_task_state(self, tid, force=False):
         """
-        Check if all requirements of task of ID ``id`` have finished running.
+        Check if all requirements of task of ID ``tid`` have finished running.
         If so, set it into the task to 'PENDING' state.
 
         If ``force``, do the check no matter what. Otherwise, only proceed
@@ -661,32 +656,32 @@ class Queue(BaseClass):
         # Ensure that it is still waiting
         # (another process could have moved it into pending)
         if not force:
-            q = 'SELECT state FROM tasks where tasks.id=?'
-            row = self.db.execute(q, (id,)).fetchone()
+            q = 'SELECT state FROM tasks where tasks.tid=?'
+            row = self.db.execute(q, (tid,)).fetchone()
             if row is None:
                 self._release_lock()
-                raise ValueError('Task ID {} not found'.format(id))
+                raise ValueError('Task ID {} not found'.format(tid))
             if row[0] != TaskState.WAITING:
                 self._release_lock()
                 return
 
         # Count number of requires that are still pending or waiting
-        query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.id WHERE d.id=? AND t.state IN (?, ?, ?)'
-        row = self._query([query, (id, TaskState.PENDING, TaskState.WAITING, TaskState.RUNNING)]).fetchone()
+        query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.tid WHERE d.tid=? AND t.state IN (?, ?, ?)'
+        row = self._query([query, (tid, TaskState.PENDING, TaskState.WAITING, TaskState.RUNNING)]).fetchone()
         self._release_lock()
         if row is None:
             return
         if row[0] == 0:
-            self.set_task_state(id, TaskState.PENDING)
+            self.set_task_state(tid, TaskState.PENDING)
         elif force:
-            self.set_task_state(id, TaskState.WAITING)
+            self.set_task_state(tid, TaskState.WAITING)
 
-    def _update_waiting_tasks(self, id):
-        """Identify tasks that are waiting for task of ID ``id``, and call :meth:`_update_waiting_task_state` on them."""
-        query = 'SELECT t.id FROM tasks t JOIN requires d ON d.id=t.id WHERE d.require=? AND t.state=?'
-        waiting_tasks = self._query([query, (id, TaskState.WAITING)]).fetchall()
-        for id in waiting_tasks:
-            self._update_waiting_task_state(id[0])
+    def _update_waiting_tasks(self, tid):
+        """Identify tasks that are waiting for task of ID ``tid``, and call :meth:`_update_waiting_task_state` on them."""
+        query = 'SELECT t.tid FROM tasks t JOIN requires d ON d.tid=t.tid WHERE d.require=? AND t.state=?'
+        waiting_tasks = self._query([query, (tid, TaskState.WAITING)]).fetchall()
+        for tid in waiting_tasks:
+            self._update_waiting_task_state(tid[0])
 
     def delete(self):
         """Delete data base :attr:`db` from both this instance and the disk."""
@@ -696,16 +691,16 @@ class Queue(BaseClass):
         import shutil
         shutil.rmtree(self.base_dir, ignore_errors=True)
 
-    def tasks(self, id=None, tmid=None, state=None, one=None, property=None):
+    def tasks(self, tid=None, mid=None, state=None, one=None, property=None):
         """
         List tasks in queue.
 
         Parameters
         ----------
-        id : str, default=None
+        tid : str, default=None
             If not ``None``, select task with given ID.
 
-        tmid : str, default=None
+        mid : str, default=None
             If not ``None``, select tasks with given task manager ID.
 
         state : str, default=None
@@ -714,11 +709,11 @@ class Queue(BaseClass):
         one : bool, default=None
             If ``True``, return only one task.
             If ``False``, return list.
-            If ``None``, and ``id`` is not ``None``, return a single task; else a list of tasks.
+            If ``None``, and ``tid`` is not ``None``, return a single task; else a list of tasks.
 
         property : str, default=None
             If not ``None``, instead of returning task(s), return this property
-            (one of 'id', 'state', 'task_manager').
+            (one of 'tid', 'state', 'task_manager').
 
         Returns
         -------
@@ -727,14 +722,14 @@ class Queue(BaseClass):
         """
         # View as list
         select = []
-        if id is not None:
-            select.append('id="{}"'.format(id))
+        if tid is not None:
+            select.append('tid="{}"'.format(tid))
             if one is None: one = True
-        if tmid is not None:
-            select.append('tmid="{}"'.format(tmid))
+        if mid is not None:
+            select.append('mid="{}"'.format(mid))
         if state is not None:
             select.append('state="{}"'.format(state))
-        query = 'SELECT task, id, state, tmid FROM tasks'
+        query = 'SELECT task, tid, state, mid FROM tasks'
         if select: query += ' WHERE {}'.format(' AND '.join(select))
         tasks = self._query(query)
         if one:
@@ -746,14 +741,14 @@ class Queue(BaseClass):
             if tasks is None: return []
         toret = []
         for task in tasks:
-            task, id, state, tmid = task
-            if property == 'id':
-                toret.append(id)
+            task, tid, state, mid = task
+            if property == 'tid':
+                toret.append(tid)
                 continue
             if property == 'state':
                 toret.append(state)
                 continue
-            task_manager = self.managers(tmid=tmid)
+            task_manager = self.managers(mid=mid)
             if property == 'task_manager':
                 toret.append(task_manager)
                 continue
@@ -765,16 +760,16 @@ class Queue(BaseClass):
             return toret[0]
         return toret
 
-    def pop(self, id=None, tmid=None):
+    def pop(self, tid=None, mid=None):
         """
         Retrieve a task to be run (i.e. in 'PENDING' state).
 
         Parameters
         ----------
-        id : str, default=None
+        tid : str, default=None
             If not ``None``, pop the task with given ID.
 
-        tmid : str, default=None
+        mid : str, default=None
             If not ``None``, pop a task with given task manager ID.
 
         Returns
@@ -786,7 +781,7 @@ class Queue(BaseClass):
             return None
 
         if self._get_lock():
-            task = self.tasks(id=id, tmid=tmid, state=TaskState.PENDING, one=True)
+            task = self.tasks(tid=tid, mid=mid, state=TaskState.PENDING, one=True)
         else:
             self.log_warning("There may be tasks left in queue but I couldn't get lock to see")
             return None
@@ -797,49 +792,49 @@ class Queue(BaseClass):
         task.update(state=TaskState.RUNNING)
         return task
 
-    def managers(self, tmid=None, property=None):
+    def managers(self, mid=None, property=None):
         """
         List managers.
 
         Parameters
         ----------
-        tmid : str, default=None
+        mid : str, default=None
             If not ``None``, return the task manager with given ID.
 
         property : str, default=None
             If not ``None``, instead of returning task manager(s), return this property
-            (one of 'tmid').
+            (one of 'mid').
 
         Returns
         -------
         tm : TaskManager, list
            Task manager or property or list of such objects.
         """
-        query = 'SELECT tmid, manager FROM managers'
-        one = tmid is not None
+        query = 'SELECT mid, manager FROM managers'
+        one = mid is not None
         if one:
-            query += ' WHERE tmid="{}"'.format(tmid)
+            query += ' WHERE mid="{}"'.format(mid)
         managers = self._query(query).fetchall()
         if managers is None:
             return None
         toret = []
         for manager in managers:
-            tmid, manager = manager
-            if property in ('tmid', 'id'):
-                toret.append(tmid)
+            mid, manager = manager
+            if property in ('mid', 'tid'):
+                toret.append(mid)
                 continue
             toret.append(QueueUnpickler.loads(manager, queue=self))
         if one:
             return toret[0]
         return toret
 
-    def counts(self, tmid=None, state=None):
+    def counts(self, mid=None, state=None):
         """
         Count the number of tasks.
 
         Parameters
         ----------
-        tmid : str, default=None
+        mid : str, default=None
             If not ``None``, select tasks with given task manager ID.
 
         state : str, default=None
@@ -850,21 +845,21 @@ class Queue(BaseClass):
         counts : int
         """
         select = []
-        if tmid is not None:
-            select.append('tmid="{}"'.format(tmid))
+        if mid is not None:
+            select.append('mid="{}"'.format(mid))
         if state is not None:
             select.append('state="{}"'.format(state))
         query = 'SELECT count(state) FROM tasks'
         if select: query += ' WHERE {}'.format(' AND '.join(select))
         return self._query(query).fetchone()[0]
 
-    def summary(self, tmid=None, return_type='dict'):
+    def summary(self, mid=None, return_type='dict'):
         """
         Return summary description of queue, i.e. number of tasks in all states :attr:`TaskState.ALL`.
 
         Parameters
         ----------
-        tmid : str, default=None
+        mid : str, default=None
             If not ``None``, select tasks with given task manager ID.
 
         return_type : str, default='dict'
@@ -875,7 +870,7 @@ class Queue(BaseClass):
         -------
         summary : dict, str
         """
-        counts = {state: self.counts(tmid=tmid, state=state) for state in TaskState.ALL}
+        counts = {state: self.counts(mid=mid, state=state) for state in TaskState.ALL}
         if return_type == 'dict':
             return counts
         if return_type == 'str':
@@ -891,11 +886,11 @@ class Queue(BaseClass):
         """String representation of queue: size, state and file name, and summary."""
         return self.__repr__() + '\n' + self.summary(return_type='str')
 
-    def __getitem__(self, id):
-        """Return task with input ID ``id``."""
-        toret = self.tasks(id=id)
+    def __getitem__(self, tid):
+        """Return task with input ID ``tid``."""
+        toret = self.tasks(tid=tid)
         if toret is None:
-            raise KeyError('task {} not found'.format(id))
+            raise KeyError('task {} not found'.format(tid))
         return toret
 
     def __getstate__(self):
@@ -1079,7 +1074,7 @@ class TaskManager(BaseClass):
     queue : Queue
         Queue, see :class:`Queue`.
 
-    id : str
+    tid : str
         Task manager unique identifier.
         It is built from the pickle representation of (:attr:`environ`, :attr:`scheduler`, :attr:`provider`),
         such that different task managers have different identifiers (with extremely high probability).
@@ -1153,7 +1148,7 @@ class TaskManager(BaseClass):
         self.scheduler(*args, **kwargs)
 
 
-def work(queue, tmid=None, id=None, mpicomm=None):
+def work(queue, mid=None, tid=None, mpicomm=None):
     """
     Do the actual work: pop tasks from the input queue, and run them.
 
@@ -1162,10 +1157,10 @@ def work(queue, tmid=None, id=None, mpicomm=None):
     queue : Queue
         Queue to pop tasks from.
 
-    tmid : str, default=None
+    mid : str, default=None
         If not ``None``, take tasks with this task manager ID.
 
-    id : str, default=None
+    tid : str, default=None
         If not ``None``, take a task with this task ID.
 
     mpicomm : MPI communicator, default=mpi.COMM_WORLD
@@ -1178,7 +1173,7 @@ def work(queue, tmid=None, id=None, mpicomm=None):
         task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
         if mpicomm.rank == 0:
-            task = queue.pop(tmid=tmid, id=id)
+            task = queue.pop(mid=mid, tid=tid)
         task = mpicomm.bcast(task, root=0)
         if task is None:
             break
@@ -1219,12 +1214,12 @@ def spawn(queue, timeout=1e4, timestep=1.):
             if queue.paused:
                 continue
             for manager in managers[iq]:
-                ntasks = queue.counts(tmid=manager.id, state=TaskState.PENDING) + queue.counts(tmid=manager.id, state=TaskState.WAITING)
+                ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING) + queue.counts(mid=manager.id, state=TaskState.WAITING)
                 # print(ntasks, queue.summary())
                 if ntasks:
                     stop = False
-                    # print('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id))
-                    manager.spawn('desipipe work --queue {} --tmid {}'.format(queue.fn, manager.id), ntasks=ntasks)
+                    # print('desipipe work --queue {} --mid {}'.format(queue.fn, manager.id))
+                    manager.spawn('desipipe work --queue {} --mid {}'.format(queue.fn, manager.id), ntasks=ntasks)
         time.sleep(timestep * random.uniform(0.8, 1.2))
 
 
@@ -1301,24 +1296,24 @@ def action_from_args(action='work', args=None):
     if action == 'work':
 
         parser.add_argument('-q', '--queue', type=str, required=True, help='Name of queue; user/queue to select user != {}'.format(Config.default_user))
-        parser.add_argument('--tmid', type=str, required=False, default=None, help='Task manager ID')
-        parser.add_argument('--id', type=str, required=False, default=None, help='Task ID')
+        parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
+        parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
         args = parser.parse_args(args=args)
         if '*' in args.queue:
             raise ValueError('Provide single queue!')
-        return work(get_queue(args.queue, create=False), tmid=args.tmid, id=args.id)
+        return work(get_queue(args.queue, create=False), mid=args.mid, tid=args.tid)
 
     if action == 'tasks':
 
         parser.add_argument('-q', '--queue', type=str, required=True, help='Name of queue; user/queue to select user != {}'.format(Config.default_user))
-        parser.add_argument('--tmid', type=str, required=False, default=None, help='Task manager ID')
-        parser.add_argument('--id', type=str, required=False, default=None, help='Task ID')
+        parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
+        parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
         parser.add_argument('--state', nargs='*', type=str, required=False, default=TaskState.ALL, choices=TaskState.ALL, help='Task state')
         args = parser.parse_args(args=args)
         if '*' in args.queue:
             raise ValueError('Provide single queue!')
         for state in args.state:
-            tasks = get_queue(args.queue, create=False).tasks(state=state, tmid=args.tmid, id=args.id)
+            tasks = get_queue(args.queue, create=False).tasks(state=state, mid=args.mid, tid=args.tid)
             if tasks:
                 logger.info('Tasks that are {}:'.format(state))
                 for task in tasks:
@@ -1381,15 +1376,15 @@ def action_from_args(action='work', args=None):
 
     if action == 'retry':
 
-        parser.add_argument('--tmid', type=str, required=False, default=None, help='Task manager ID')
-        parser.add_argument('--id', type=str, required=False, default=None, help='Task ID')
+        parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
+        parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
         parser.add_argument('--state', type=str, required=False, default=TaskState.KILLED, choices=TaskState.ALL, help='Task state')
         parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process')
         args = parser.parse_args(args=args)
         queues = get_queue(args.queue, create=False)
         for queue in queues:
-            for id in queue.tasks(tmid=args.tmid, id=args.id, state=args.state, property='id'):
-                queue.set_task_state(id, state=TaskState.PENDING)
+            for tid in queue.tasks(mid=args.mid, tid=args.tid, state=args.state, property='tid'):
+                queue.set_task_state(tid, state=TaskState.PENDING)
         if args.spawn:
             subprocess.Popen(['desipipe', 'spawn', '--queue', ' '.join(args.queue)], start_new_session=True, env=os.environ)
         return

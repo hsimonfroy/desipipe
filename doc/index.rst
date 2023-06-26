@@ -37,7 +37,6 @@ In terms of capabilities, **desipipe** includes:
 
 Example scripts and notebooks are provided in :root:`desipipe/examples` and :root:`desipipe/nb`.
 
-
 The goal is to be able to write a full processing pipeline within one Python script / notebook,
 which then serves as a pipeline documentation. Here is an example, estimating :math:`\pi`.
 
@@ -85,7 +84,6 @@ which then serves as a pipeline documentation. Here is an example, estimating :m
   ech = echo(avg)
   # At this point jobs are submitted
   print('Elapsed time: {:.4f}'.format(time.time() - t0))
-
 
 
 **************

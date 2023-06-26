@@ -193,7 +193,7 @@ class SlurmProvider(BaseProvider):
         else:
             cmd = [self.mpiexec.format(nodes=int(self.nodes_per_worker), mpiprocs=self.mpiprocs_per_worker, cmd=cmd)] * workers
             cmd = ' & '.join(cmd) + ' & wait'
-        cmd = self.environ.to_script(sep=' ; ') + cmd
+        cmd = self.environ.to_script(sep=' ; ') + ' ; ' + cmd
         # --parsable to get jobid (optionally, cluster name)
         # -- wrap to pass the job
         cmd = ['sbatch', '--output=/dev/null', '--error=/dev/null', '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', f'"{cmd}"']
