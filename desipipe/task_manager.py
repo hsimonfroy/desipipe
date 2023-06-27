@@ -164,7 +164,7 @@ class Task(BaseClass):
     dtime : float
         Running time of :class:`BaseApp.run`.
     """
-    _attrs = ['id', 'app', 'args', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'versions', 'result', 'dtime']
+    _attrs = ['id', 'app', 'index', 'args', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'versions', 'result', 'dtime']
 
     def __init__(self, app, args=None, kwargs=None, state=None):
         """
@@ -194,6 +194,7 @@ class Task(BaseClass):
         require_id = False
         if 'app' in kwargs:
             self.app = kwargs.pop('app')
+            self.index = self.app.index
             require_id = True
         if 'args' in kwargs:
             self.args = tuple(kwargs.pop('args'))
@@ -407,10 +408,10 @@ class Queue(BaseClass):
             # Create tables
             script = """
             CREATE TABLE tasks (
-                tid       TEXT PRIMARY KEY,
+                tid      TEXT PRIMARY KEY,
                 task     TEXT,
                 state    TEXT,
-                mid     TEXT  -- task manager id
+                mid      TEXT  -- task manager id
             );
             -- Dependencies table.  Multiple entries for multiple deps.
             CREATE TABLE requires (
@@ -691,8 +692,7 @@ class Queue(BaseClass):
         except OSError:
             pass
 
-
-    def tasks(self, tid=None, mid=None, state=None, one=None, property=None):
+    def tasks(self, tid=None, mid=None, state=None, name=None, index=None, one=None, property=None):
         """
         List tasks in queue.
 
@@ -706,6 +706,12 @@ class Queue(BaseClass):
 
         state : str, default=None
             If not ``None``, select tasks with given state.
+
+        name : str, default=None
+            If not ``None``, select tasks with input application name.
+
+        index : int, default=None
+            If not ``None``, select tasks with input index.
 
         one : bool, default=None
             If ``True``, return only one task.
@@ -740,9 +746,17 @@ class Queue(BaseClass):
         else:
             tasks = tasks.fetchall()
             if tasks is None: return []
+        if name is not None and index is not None:
+            one = True
         toret = []
         for task in tasks:
-            task, tid, state, mid = task
+            (ptask, tid, state, mid), task = task, None
+            if name is not None or index is not None or property is None:
+                task = QueueUnpickler.loads(ptask, queue=self)
+                if name is not None and task.app.name != name:
+                    continue
+                if index is not None and task.index != index:
+                    continue
             if property == 'tid':
                 toret.append(tid)
                 continue
@@ -753,12 +767,15 @@ class Queue(BaseClass):
             if property == 'task_manager':
                 toret.append(task_manager)
                 continue
-            task = QueueUnpickler.loads(task, queue=self)
+            if property is not None:
+                raise ValueError('unkown property {}'.format(property))
             task.update(state=state)
             task.app.task_manager = task_manager
             toret.append(task)
         if one:
-            return toret[0]
+            if len(toret):
+                return toret[0]
+            return None
         return toret
 
     def pop(self, tid=None, mid=None):
@@ -894,6 +911,15 @@ class Queue(BaseClass):
             raise KeyError('task {} not found'.format(tid))
         return toret
 
+    def __delitem__(self, tid):
+        """Delete task with input ID ``tid``."""
+        if not self._get_lock():
+            self.log_error('unable to get db lock; not deleting tasj')
+            return
+        query = 'DELETE FROM tasks WHERE tid=?'
+        self._query([query, (tid,)])
+        self._release_lock()
+
     def __getstate__(self):
         """Return queue state: just its file name."""
         return {'fn': self.fn}
@@ -924,7 +950,7 @@ class BaseApp(BaseClass):
     task_manager : TaskManager
         Task manager to which the task has been added.
     """
-    def __init__(self, func, task_manager=None):
+    def __init__(self, func, task_manager=None, skip=False, name=None):
         """
         Initialize application, called by :class:`TaskManager` decorators :meth:`TaskManager.bash_app` and :meth:`TaskManager.python_app`.
 
@@ -939,7 +965,8 @@ class BaseApp(BaseClass):
         if isinstance(func, self.__class__):
             self.__dict__.update(func.__dict__)
             return
-        self.update(func=func, task_manager=task_manager)
+        self.add = {'skip': False, 'name': None}
+        self.update(func=func, task_manager=task_manager, skip=skip, name=name)
 
     def update(self, **kwargs):
         """Update app with input attributes."""
@@ -961,6 +988,15 @@ class BaseApp(BaseClass):
             #    self.imports[m.__name__] = getattr(m, '__version__')
             if 'task_manager' in kwargs:
                 self.task_manager = kwargs.pop('task_manager')
+            self.index = -1
+        if 'skip' in kwargs:
+            self.add['skip'] = bool(kwargs.pop('skip'))
+        if 'name' in kwargs:
+            name = kwargs.pop('name')
+            if name:
+                if not isinstance(name, str):
+                    name = self.name
+                self.add['name'] = name
         if kwargs:
             raise ValueError('Unrecognized arguments {}'.format(kwargs))
 
@@ -972,15 +1008,23 @@ class BaseApp(BaseClass):
 
     def __call__(self, *args, **kwargs):
         """Call the decorator, i.e. add task to the queue."""
-        return self.task_manager.add(Task(self, args, kwargs))
+        self.index += 1
+        if self.add['skip']:
+            return None
+        queue = self.task_manager.queue
+        if self.add['name']:
+            tid = queue.tasks(name=self.add['name'], index=self.index, property='tid')
+            return Future(queue=queue, tid=tid)
+        return queue.add(Task(self, args, kwargs), replace=None)
 
     def __getstate__(self):
         """Return app state."""
-        state = {name: getattr(self, name) for name in ['name', 'code', 'file', 'task_manager']}
+        state = {name: getattr(self, name) for name in ['name', 'code', 'file', 'index', 'task_manager']}
         return state
 
     def __setstate__(self, state):
         """Set app state."""
+        self.add = {'skip': False, 'name': None}
         self.__dict__.update(state)
         exec(self.code)
         self.func = locals()[self.name]
@@ -1057,6 +1101,45 @@ class BashApp(BaseApp):
         return errno, result, err, out, {}
 
 
+def decorator(func):
+    """
+    Decorator to deal with decorator arguments, e.g.:
+
+    .. code-block:: python
+
+        @tm.python_app
+        def test(n):
+            print('hello' * n)
+
+    and
+
+    .. code-block:: python
+
+        @tm.python_app(skip=False)
+        def test(n):
+            print('hello' * n)
+
+    are equivalent.
+    """
+
+    def wrapper(self, *args, **kwargs):
+        if kwargs:
+            if args:
+                raise ValueError('unexpected args')
+
+            def wrapper(app):
+                return func(self, app, **kwargs)
+
+            return wrapper
+
+        if len(args) != 1:
+            raise ValueError('unexpected args')
+
+        return func(self, args[0], **kwargs)
+
+    return wrapper
+
+
 class TaskManager(BaseClass):
     """
     Task manager, main class to be used in scripts, e.g.:
@@ -1130,18 +1213,15 @@ class TaskManager(BaseClass):
         new.update(**kwargs)
         return new
 
-    def python_app(self, func):
+    @decorator
+    def python_app(self, func, **kwargs):
         """Decorator for :class:`PythonApp`."""
-        return PythonApp(func, task_manager=self)
+        return PythonApp(func, task_manager=self, **kwargs)
 
-    def bash_app(self, func):
+    @decorator
+    def bash_app(self, func, **kwargs):
         """Decorator for :class:`BashApp`."""
-        return BashApp(func, task_manager=self)
-
-    def add(self, task, replace=None):
-        """Add task to the queue, see :meth:`Queue.add`."""
-        task.app.task_manager = self
-        return self.queue.add(task, replace=replace)
+        return BashApp(func, task_manager=self, **kwargs)
 
     def spawn(self, *args, **kwargs):
         """Distribute tasks to workers."""

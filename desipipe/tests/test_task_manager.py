@@ -46,13 +46,36 @@ def test_queue():
         import numpy as np
         return np.average(fractions) * 4.
 
+    @tm2.python_app(name='average')
+    def average2(fractions):
+        return None
+
+    @tm2.python_app(skip=True)
+    def average3(fractions):
+        return None
+
     t0 = time.time()
     fractions = [fraction(size=1000 + i) for i in range(5)]
     ech = echo(fractions)
     avg = average(fractions)
+    avg2 = average2(fractions)
+    assert average3(fractions) is None
     if spawn:
         print(ech.out())
+        assert avg2.result() == avg.result()
         print(avg.result(), time.time() - t0)
+
+    @tm2.bash_app(name=True)
+    def fraction():
+        return None
+
+    if spawn:
+        for frac in fractions:
+            assert fraction().result() == frac.result()  # the previous fraction result is used
+
+    for tid in queue.tasks(name='fraction', property='tid'):
+        del queue[tid]
+    queue.delete()
 
 
 def test_cmdline():
@@ -79,7 +102,7 @@ def test_file():
         fi.get().write(txt)
     fm.db.append(fm.db[0].clone(id='output', path=os.path.join(base_dir, 'hello_out_{i:d}.txt')))
 
-    spawn = True
+    spawn = False
     queue = Queue('test2', base_dir=base_dir, spawn=spawn)
     provider = None
     if os.getenv('NERSC_HOST', None):
@@ -102,10 +125,12 @@ def test_file():
             print('out', res.out())
             print('err', res.err())
 
+    queue.delete()
+
 
 if __name__ == '__main__':
 
     #test_app()
-    #test_queue()
+    test_queue()
     #test_cmdline()
     test_file()
