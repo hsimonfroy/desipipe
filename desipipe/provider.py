@@ -196,7 +196,7 @@ class SlurmProvider(BaseProvider):
         cmd = self.environ.to_script(sep=' ; ') + ' ; ' + cmd
         # --parsable to get jobid (optionally, cluster name)
         # -- wrap to pass the job
-        cmd = ['sbatch',  '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', cmd]
+        cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', cmd]
         #cmd = ['sbatch', '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', cmd]
         proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         self.processes.append((proc.stdout.split(',')[0].strip(), workers))  # jobid, workers

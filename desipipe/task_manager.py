@@ -41,24 +41,76 @@ task_states = ['WAITING',       # Waiting for requirements (other tasks) to fini
 TaskState = type('TaskState', (), {**dict(zip(task_states, task_states)), 'ALL': task_states})
 
 
+class SerializationError(Exception): pass
+
+
+class DeserializationError(Exception): pass
+
 
 def reduce_app(self):
-    """Special reduce method for :class:`BaseApp`, dropping :attr:`task_manager` and :attr:`file`."""
+    """Special reduce method for :class:`BaseApp`, dropping :attr:`task_manager`."""
     state = self.__getstate__()
-    state['task_manager'] = state['file'] = None
+    state['task_manager'] = None
     return (self.__class__.__new__, (self.__class__,), state)
 
 
-class QueuePickler(pickle.Pickler):
+def serialize_function(func, remove_decorator=False):
+    if not inspect.isfunction(func):
+        raise SerializationError('{} is not a function'.format(func))
+    name = func.__name__
+    if name.startswith('<') and name.endswith('>'):
+        raise SerializationError('{} has no valuable name, e.g. may be a lambda expression?'.format(func))
+    code = getattr(func, '__desipipecode__', None)
+    if code is None:
+        try:
+            code = inspect.getsource(func)
+        except Exception as exc:
+            raise SerializationError('cannot find source code for {}'.format(func)) from exc
+    code = textwrap.dedent(code).split('\n')
+    if remove_decorator:
+        if code[0].startswith('@'):
+            code = code[1:]
+    code = '\n'.join(code)
+    if not code.startswith('def '):
+        raise SerializationError('{} code does not start with def: {}'.format(func, code))
+    _, code = code.split(':', maxsplit=1)
+    sig = inspect.signature(func)
+    parameters, dlocals = [], {}
+    for param in sig.parameters.values():
+        default = param.default
+        if default is not inspect._empty:
+            try:
+                param = param.replace(default='#{}#'.format(param.name))
+                dlocals[param.name] = default
+            except ValueError:
+                pass
+        parameters.append(param)
+    sig = sig.replace(parameters=parameters)
+    sig = str(sig)
+    for param in dlocals:
+        sig = sig.replace("'#{}#'".format(param), param)
+    code = 'def {}{}:{}'.format(name, sig, code)
+    return name, code, dlocals
 
-    """Special pickler for queue, handling :class:`BaseApp` and :class:`Future` instances."""
 
-    def __init__(self, *args, **kwargs):
+def deserialize_function(name, code, dlocals):
+    scope = {}
+    exec(code, dlocals, scope)
+    scope[name].__desipipecode__ = code
+    return scope[name]
+
+
+class TaskPickler(pickle.Pickler):
+
+    """Special pickler for tasks, handling :class:`BaseApp` and :class:`Future` instances."""
+
+    def __init__(self, *args, reduce_app=reduce_app, **kwargs):
         """Initialize pickler and add the special reduce method for :class:`BaseApp` to the :attr:`dispatch_table`."""
-        super(QueuePickler, self).__init__(*args, **kwargs)
+        super(TaskPickler, self).__init__(*args, **kwargs)
         self.dispatch_table = copyreg.dispatch_table.copy()
-        for cls in BaseApp.__subclasses__():
-            self.dispatch_table[cls] = reduce_app
+        if reduce_app:
+            for cls in BaseApp.__subclasses__():
+                self.dispatch_table[cls] = reduce_app
 
     def persistent_id(self, obj):
         # Instead of pickling obj as a regular class instance, we emit a persistent ID.
@@ -69,6 +121,13 @@ class QueuePickler(pickle.Pickler):
             ids.append(obj.id)
             setattr(self, 'future_ids', ids)
             return ('Future', obj.id)
+
+        try:
+            name, code, dlocals = serialize_function(obj)
+        except SerializationError:
+            pass
+        else:
+            return ('Function', (name, code, dlocals))
         # If obj does not have a persistent ID, return None. This means obj
         # needs to be pickled as usual.
         return None
@@ -84,9 +143,9 @@ class QueuePickler(pickle.Pickler):
         return f.getvalue()
 
 
-class QueueUnpickler(pickle.Unpickler):
+class TaskUnpickler(pickle.Unpickler):
     """
-    Unpickler that corresponds to :class:`QueuePickler`,
+    Unpickler that corresponds to :class:`TaskPickler`,
     replacing :class:`Future` instances by the actual result of the computation.
     """
     def __init__(self, file, queue=None):
@@ -95,11 +154,76 @@ class QueueUnpickler(pickle.Unpickler):
 
     def persistent_load(self, pid):
         # This method is invoked whenever a persistent ID is encountered.
-        # Here, pid is the tuple returned by QueueUnpickler.
+        # Here, pid is the tuple returned by TaskUnpickler.
         tag, tid = pid
         if tag == 'Future':
             # Fetch the referenced record from the database and return it.
             return self.queue[tid].result
+        elif tag == 'Function':
+            return deserialize_function(*tid)
+        else:
+            # Always raises an error if you cannot return the correct object.
+            # Otherwise, the unpickler will think None is the object referenced
+            # by the persistent ID.
+            raise pickle.UnpicklingError('unsupported persistent object')
+
+    @classmethod
+    def loads(cls, s, *args, **kwargs):
+        """
+        Load input string ``s``.
+        args and kwargs are passed to :meth:`__init__`.
+        """
+        f = io.BytesIO(s)
+        return cls(f, *args, **kwargs).load()
+
+
+class TaskManagerPickler(pickle.Pickler):
+
+    """Special pickler for tasks, handling :class:`BaseApp` and :class:`Future` instances."""
+
+    def persistent_id(self, obj):
+        # Instead of pickling obj as a regular class instance, we emit a persistent ID.
+        if isinstance(obj, TaskManager):
+            # Here, our persistent ID is simply a tuple, containing a tag and a
+            # key, which refers to a specific record in the database.
+            state = obj.__getstate__()
+            state['queue'] = None
+            return ('TaskManager', state)
+
+        # If obj does not have a persistent ID, return None. This means obj
+        # needs to be pickled as usual.
+        return None
+
+    @classmethod
+    def dumps(cls, obj, *args, **kwargs):
+        """
+        Dump input ``obj`` to string.
+        args and kwargs are passed to :meth:`__init__`.
+        """
+        f = io.BytesIO()
+        cls(f, *args, **kwargs).dump(obj)
+        return f.getvalue()
+
+
+class TaskManagerUnpickler(pickle.Unpickler):
+    """
+    Unpickler that corresponds to :class:`TaskPickler`,
+    replacing :class:`Future` instances by the actual result of the computation.
+    """
+    def __init__(self, file, queue=None):
+        super().__init__(file)
+        self.queue = queue
+
+    def persistent_load(self, pid):
+        # This method is invoked whenever a persistent ID is encountered.
+        # Here, pid is the tuple returned by TaskUnpickler.
+        tag, state = pid
+        if tag == 'TaskManager':
+            # Fetch the referenced record from the database and return it.
+            state['queue'] = self.queue
+            toret = TaskManager.__new__(TaskManager)
+            toret.__setstate__(state)
+            return toret
         else:
             # Always raises an error if you cannot return the correct object.
             # Otherwise, the unpickler will think None is the object referenced
@@ -164,9 +288,9 @@ class Task(BaseClass):
     dtime : float
         Running time of :class:`BaseApp.run`.
     """
-    _attrs = ['id', 'app', 'index', 'args', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'versions', 'result', 'dtime']
+    _attrs = ['id', 'app', 'index', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'versions', 'result', 'dtime']
 
-    def __init__(self, app, args=None, kwargs=None, state=None):
+    def __init__(self, app, kwargs=None, state=None):
         """
         Initialize :class:`Task`.
 
@@ -174,9 +298,6 @@ class Task(BaseClass):
         ----------
         app : BaseApp
             Application.
-
-        args : tuple, default=None
-            Tuple of arguments to be passed to :meth:`BaseApp.run`.
 
         kwargs : dict, default=None
             Dictionary of arguments to be passed to :meth:`BaseApp.run`.
@@ -187,7 +308,7 @@ class Task(BaseClass):
         """
         self.result = None
         self.dtime = None
-        self.update(app=app, args=args, kwargs=kwargs, state=state, jobid='', errno=None, err='', out='')
+        self.update(app=app, kwargs=kwargs, state=state, jobid='', errno=None, err='', out='')
 
     def update(self, **kwargs):
         """Update task with input attributes."""
@@ -196,9 +317,6 @@ class Task(BaseClass):
             self.app = kwargs.pop('app')
             self.index = self.app.index
             require_id = True
-        if 'args' in kwargs:
-            self.args = tuple(kwargs.pop('args'))
-            require_id = True
         if 'kwargs' in kwargs:
             self.kwargs = dict(kwargs.pop('kwargs') or {})
             require_id = True
@@ -206,12 +324,13 @@ class Task(BaseClass):
         if not hasattr(self, 'require_ids') or require_id:
             try:
                 f = io.BytesIO()
-                pickler = QueuePickler(f)
-                pickler.dump((self.app, self.args, self.kwargs))
+                pickler = TaskPickler(f)
+                pickler.dump((self.app.name, self.app.code, self.kwargs))
                 uid = f.getvalue()
                 self.require_ids = list(getattr(pickler, 'future_ids', []))
             except (AttributeError, pickle.PicklingError) as exc:
-                raise ValueError('Make sure the task function, args and kwargs are picklable') from exc
+                raise SerializationError('Make sure the task function, args and kwargs are picklable') from exc
+
         if 'state' in kwargs:
             self.state = kwargs.pop('state')
             if self.state is None:
@@ -246,24 +365,29 @@ class Task(BaseClass):
         from .file_manager import File
         t0 = time.time()
 
-        def save_attrs(file, dirname):
-            dirname = os.path.join(dirname, '.desipipe')
+        def write_attrs(file, base_dir):
+            dirname = os.path.join(base_dir, '.desipipe')
             utils.mkdir(dirname)
-            input_fn = getattr(self.app, 'file', None)
             script_fn = os.path.join(dirname, '{}.py'.format(self.app.name))
-            if input_fn is not None and os.path.isfile(input_fn):
-                shutil.copyfile(input_fn, script_fn)
-            else:
-                with open(script_fn, 'w') as file:
-                    file.write(self.app.code)
-            versions_fn = os.path.join(dirname, '{}.versions'.format(self.app.name))
-            with open(versions_fn, 'w') as file:
-                for name, version in self.app.versions().items():
-                    file.write('{}={}\n'.format(name, version))
+            if 'code' in self.app.write_attrs:
+                input_fn = getattr(self.app, 'filename', None)
+                if input_fn is not None and os.path.isfile(input_fn):
+                    shutil.copyfile(input_fn, script_fn)
+                else:
+                    with open(script_fn, 'w') as file:
+                        file.write(self.app.code)
+            if 'versions' in self.app.write_attrs:
+                versions_fn = os.path.join(dirname, '{}.versions'.format(self.app.name))
+                with open(versions_fn, 'w') as file:
+                    for name, version in self.app.versions().items():
+                        file.write('{}={}\n'.format(name, version))
+            if 'cwd' in self.app.write_attrs:
+                shutil.copytree(self.app.dirname, dirname, dirs_exist_ok=True)
+            return self.app.write_dir  # destination
 
-        File.save_attrs = save_attrs  # save main script and versions whenever a file is written to disk
-        self.errno, self.result, self.err, self.out, self.versions = self.app.run(tuple(self.args), self.kwargs)
-        File.save_attrs = None
+        File.write_attrs = write_attrs  # save main script and versions whenever a file is written to disk
+        self.errno, self.result, self.err, self.out, self.versions = self.app.run(**self.kwargs)
+        File.write_attrs = None
         if self.errno:
             if self.errno == signal.SIGTERM:
                 self.state = TaskState.KILLED
@@ -385,11 +509,11 @@ class Queue(BaseClass):
 
         if not name.endswith('.sqlite'):
             name += '.sqlite'
-        self.fn = os.path.abspath(os.path.join(base_dir, name))
-        self.base_dir = os.path.dirname(self.fn)
+        self.filename = os.path.abspath(os.path.join(base_dir, name))
+        self.dirname = os.path.dirname(self.filename)
 
         # Check if it already exists and/or if we are supposed to create it
-        exists = os.path.exists(self.fn)
+        exists = os.path.exists(self.filename)
         if create is None:
             create = not exists
         elif create and exists:
@@ -399,11 +523,12 @@ class Queue(BaseClass):
 
         # Create directory with rwx for user but no one else
         if create:
-            utils.mkdir(self.base_dir, mode=0o700)
-            self.db = sqlite3.Connection(self.fn)
+            self.log_info('Creating queue {}'.format(self.filename))
+            utils.mkdir(self.dirname, mode=0o700)
+            self.db = sqlite3.Connection(self.filename)
 
             # Give rw access to user but no one else
-            os.chmod(self.fn, 0o600)
+            os.chmod(self.filename, 0o600)
 
             # Create tables
             script = """
@@ -439,9 +564,12 @@ class Queue(BaseClass):
             self.db.execute('INSERT INTO metadata VALUES (?, ?)', ('state', QueueState.ACTIVE))
             self.db.commit()
         else:
-            self.db = sqlite3.Connection(self.fn, timeout=60)
+            self.log_debug('Connection to queue {}'.format(self.filename))
+            self.db = sqlite3.Connection(self.filename, timeout=60)
         if spawn:
-            subprocess.Popen(['desipipe', 'spawn', '--queue', self.fn], start_new_session=True, env=os.environ)
+            cmd = ['desipipe', 'spawn', '--queue', self.filename]
+            self.log_info('Spawning: {}'.format(' '.join(cmd)))
+            subprocess.Popen(cmd, start_new_session=True, env=os.environ)
 
     def _query(self, query, timeout=120., timestep=1., many=False):
         """
@@ -495,7 +623,7 @@ class Queue(BaseClass):
                     if (time.time() - t0) < timeout:
                         self.db.close()
                         time.sleep(timestep * random.uniform(0.8, 1.2))
-                        self.db = sqlite3.Connection(self.fn)
+                        self.db = sqlite3.Connection(self.filename)
                         ntries += 1
                     else:
                         self.log_error('tried {} times and still getting errors'.format(ntries))
@@ -526,7 +654,8 @@ class Queue(BaseClass):
     def _add_manager(self, manager):
         # """Add input :class:`TaskManager` to the data base (or replace if already there, as specified by :attr:`TaskManager.id`)."""
         query = 'INSERT OR REPLACE INTO managers (mid, manager) VALUES (?, ?)'
-        self._query([query, (manager.id, QueuePickler.dumps(manager))])
+        state = manager.__getstate__()
+        self._query([query, (manager.id, TaskManagerPickler.dumps(manager))])
         self.db.commit()
 
     def add(self, tasks, replace=False):
@@ -541,7 +670,7 @@ class Queue(BaseClass):
         replace : bool, default=False
             If ``True``, replace task(s) (as identified by their IDs) with the input ones.
             If ``False``, an error is raised if input tasks (as identified by their IDs) are already in the queue.
-            If ``None``, do not add task if already in queue.
+            If ``None``, do not add task if already in queue, but update task manager if task state is 'PENDING' or 'WAITING'.
 
         Returns
         -------
@@ -552,26 +681,31 @@ class Queue(BaseClass):
         if isscalar:
             tasks = [tasks]
         ids, requires, managers, states, tasks_serialized, futures = [], [], [], [], [], []
+        self._get_lock()
         for task in tasks:
             futures.append(Future(queue=self, tid=task.id))
+            manager = task.app.task_manager
             if replace is None:
-                row = self._query(['SELECT COUNT(tid) FROM tasks WHERE tid=?', (task.id,)]).fetchone()
-                if row is not None and row[0]: continue
+                row = self._query(['SELECT state, mid FROM tasks WHERE tid=?', (task.id,)]).fetchone()
+                if row:
+                    state, mid = row
+                    if state in (TaskState.PENDING, TaskState.WAITING) and mid != manager.id:
+                        self._query(['REPLACE INTO tasks (tid, mid) VALUES (?, ?)', (task.id, mid)])
+                        managers.append(manager)
+                    continue
             ids.append(task.id)
             requires.append(task.require_ids)
-            managers.append(task.app.task_manager)
+            managers.append(manager)
             states.append(task.state)
-            tasks_serialized.append(QueuePickler.dumps(task))
+            tasks_serialized.append(TaskPickler.dumps(task))
         query = 'INSERT'
         if replace: query = 'REPLACE'
         query += ' INTO tasks (tid, task, state, mid) VALUES (?,?,?,?)'
-        self._get_lock()
         self._query([query, zip(ids, tasks_serialized, states, [tm.id for tm in managers])], many=True)
-        if not replace:
-            for tid, requires in zip(ids, requires):
-                self._add_requires(tid, requires)
-            for manager in managers:
-                self._add_manager(manager)
+        for tid, requires in zip(ids, requires):
+            self._add_requires(tid, requires)
+        for manager in managers:
+            self._add_manager(manager)
         self.db.commit()
         self._release_lock()
         for tid, state in zip(ids, states):
@@ -655,7 +789,7 @@ class Queue(BaseClass):
         # Ensure that it is still waiting
         # (another process could have moved it into pending)
         if not force:
-            q = 'SELECT state FROM tasks where tasks.tid=?'
+            q = 'SELECT state FROM tasks WHERE tasks.tid=?'
             row = self.db.execute(q, (tid,)).fetchone()
             if row is None:
                 self._release_lock()
@@ -688,7 +822,7 @@ class Queue(BaseClass):
             self.db.close()
             del self.db
         try:
-            os.remove(self.fn)
+            os.remove(self.filename)
         except OSError:
             pass
 
@@ -752,7 +886,7 @@ class Queue(BaseClass):
         for task in tasks:
             (ptask, tid, state, mid), task = task, None
             if name is not None or index is not None or property is None:
-                task = QueueUnpickler.loads(ptask, queue=self)
+                task = TaskUnpickler.loads(ptask, queue=self)
                 if name is not None and task.app.name != name:
                     continue
                 if index is not None and task.index != index:
@@ -841,7 +975,7 @@ class Queue(BaseClass):
             if property in ('mid', 'tid'):
                 toret.append(mid)
                 continue
-            toret.append(QueueUnpickler.loads(manager, queue=self))
+            toret.append(TaskManagerUnpickler.loads(manager, queue=self))
         if one:
             return toret[0]
         return toret
@@ -898,7 +1032,7 @@ class Queue(BaseClass):
 
     def __repr__(self):
         """String representation of queue: size, state and file name."""
-        return '{}(size={}, state={}, fn={})'.format(self.__class__.__name__, self.counts(), self.state, self.fn)
+        return '{}(size={}, state={}, filename={})'.format(self.__class__.__name__, self.counts(), self.state, self.filename)
 
     def __str__(self):
         """String representation of queue: size, state and file name, and summary."""
@@ -922,11 +1056,11 @@ class Queue(BaseClass):
 
     def __getstate__(self):
         """Return queue state: just its file name."""
-        return {'fn': self.fn}
+        return {'filename': self.filename}
 
     def __setstate__(self, state):
         """Set queue state, from the file name."""
-        self.__init__(state['fn'], base_dir='', create=False, spawn=False)
+        self.__init__(state['filename'], base_dir='', create=False, spawn=False)
 
 
 class BaseApp(BaseClass):
@@ -944,13 +1078,16 @@ class BaseApp(BaseClass):
     code : str
         :attr:`func` code.
 
-    file : str
+    filename : str
         File path where :attr:`func` is defined (may be ``None``, e.g. in case of notebooks).
+
+    dirname : str
+        Current working directory.
 
     task_manager : TaskManager
         Task manager to which the task has been added.
     """
-    def __init__(self, func, task_manager=None, skip=False, name=None):
+    def __init__(self, func, task_manager=None, skip=False, name=None, write_attrs=('code', 'versions'), write_dir=None):
         """
         Initialize application, called by :class:`TaskManager` decorators :meth:`TaskManager.bash_app` and :meth:`TaskManager.python_app`.
 
@@ -966,23 +1103,21 @@ class BaseApp(BaseClass):
             self.__dict__.update(func.__dict__)
             return
         self.add = {'skip': False, 'name': None}
-        self.update(func=func, task_manager=task_manager, skip=skip, name=name)
+        self.update(func=func, task_manager=task_manager, skip=skip, name=name, write_attrs=write_attrs, write_dir=write_dir)
 
     def update(self, **kwargs):
         """Update app with input attributes."""
         if 'func' in kwargs:
             self.func = kwargs.pop('func')
-            self.name = self.func.__name__
-            self.code = textwrap.dedent(inspect.getsource(self.func)).split('\n')
-            if self.code[0].startswith('@'):
-                self.code = self.code[1:]
-            self.code = '\n'.join(self.code)
-            self.file = None
+            self.name, self.code, dlocals = serialize_function(self.func, remove_decorator=True)
+            self.params = list(dlocals.keys())
+            self.filename = None
             try:
-                self.file = inspect.getfile(self.func)
-                if not os.path.isfile(self.file): self.file = None
+                self.filename = inspect.getfile(self.func)
+                if not os.path.isfile(self.filename): self.filename = None
             except:
                 pass
+            self.dirname = os.getcwd()
             #self.imports = {}
             #for m in re.findall('[\n;\s]*from\s+([^\s.]*)\s+import', self.code) + re.findall('[\n;\s]*import\s+([^\s.]*)\s*', self.code):
             #    self.imports[m.__name__] = getattr(m, '__version__')
@@ -997,6 +1132,17 @@ class BaseApp(BaseClass):
                 if not isinstance(name, str):
                     name = self.name
                 self.add['name'] = name
+        if 'write_attrs' in kwargs:
+            self.write_attrs = kwargs.pop('write_attrs')
+            if isinstance(self.write_attrs, str):
+                self.write_attrs = (self.write_attrs,)
+            self.write_attrs = tuple(self.write_attrs)
+        if 'write_dir' in kwargs:
+            self.write_dir = kwargs.pop('write_dir')
+            if self.write_dir:
+                self.write_dir = str(self.write_dir)
+            else:
+                self.write_dir = None
         if kwargs:
             raise ValueError('Unrecognized arguments {}'.format(kwargs))
 
@@ -1015,21 +1161,21 @@ class BaseApp(BaseClass):
         if self.add['name']:
             tid = queue.tasks(name=self.add['name'], index=self.index, property='tid')
             return Future(queue=queue, tid=tid)
-        return queue.add(Task(self, args, kwargs), replace=None)
+        kwargs = inspect.getcallargs(self.func, *args, **kwargs)
+        return queue.add(Task(self, kwargs), replace=None)
 
     def __getstate__(self):
         """Return app state."""
-        state = {name: getattr(self, name) for name in ['name', 'code', 'file', 'index', 'task_manager']}
+        state = {name: getattr(self, name) for name in ['name', 'code', 'params', 'filename', 'dirname', 'write_attrs', 'write_dir', 'task_manager']}
         return state
 
     def __setstate__(self, state):
         """Set app state."""
         self.add = {'skip': False, 'name': None}
         self.__dict__.update(state)
-        exec(self.code)
-        self.func = locals()[self.name]
+        self.func = deserialize_function(self.name, self.code, dict.fromkeys(self.params))
 
-    def run(self, args, kwargs):
+    def run(self, *args, **kwargs):
         """Run app with input ``args`` and ``kwargs``."""
         raise NotImplementedError
 
@@ -1057,9 +1203,11 @@ class PythonApp(BaseApp):
             print('hello' * n)
 
     """
-    def run(self, args, kwargs):
+    def run(self, *args, **kwargs):
         """Run app with input ``args`` and ``kwargs``."""
         errno, result = 0, None
+        if self.dirname not in sys.path:
+            sys.path.insert(0, self.dirname)
         with io.StringIO() as out, io.StringIO() as err, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
                 result = self.func(*args, **kwargs)
@@ -1092,7 +1240,7 @@ class BashApp(BaseApp):
             return "echo '{}'".format('hello' * n)
 
     """
-    def run(self, args, kwargs):
+    def run(self, *args, **kwargs):
         """Run app with input ``args`` and ``kwargs``."""
         errno, result, out, err = 0, None, '', ''
         cmd = self.func(*args, **kwargs)
@@ -1201,7 +1349,7 @@ class TaskManager(BaseClass):
                 setattr(self, name, func(kwargs.pop(name)))
                 if name != 'queue': require_id = True
         if require_id:
-            uid = QueuePickler.dumps((self.environ, self.scheduler, self.provider))
+            uid = pickle.dumps((self.environ, self.scheduler, self.provider))
             hex = hashlib.md5(uid).hexdigest()
             self.id = str(uuid.UUID(hex=hex))  # unique ID, tied to the given environ, scheduler, provider
         if kwargs:
@@ -1212,6 +1360,12 @@ class TaskManager(BaseClass):
         new = self.copy()
         new.update(**kwargs)
         return new
+
+    def __getstate__(self):
+        return {name: getattr(self, name) for name in ['queue', 'environ', 'scheduler', 'provider']}
+
+    def __setstate__(self, state):
+        self.update(**state)
 
     @decorator
     def python_app(self, func, **kwargs):
@@ -1259,8 +1413,8 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
         task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
         if mpicomm.rank == 0:
-            task = queue.pop(mid=mid, tid=tid)
-        task = mpicomm.bcast(task, root=0)
+            task = TaskPickler.dumps(queue.pop(mid=mid, tid=tid), reduce_app=None)
+        task = TaskUnpickler.loads(mpicomm.bcast(task, root=0))
         if task is None:
             break
         task.run()
@@ -1289,23 +1443,23 @@ def spawn(queue, timeout=1e4, timestep=1.):
     queues = [queue] if isinstance(queue, Queue) else queue
     t0 = time.time()
     stop = False
-    managers = [queue.managers() for queue in queues]  # get once, to avoid unpickling manager for each task
+    # print(managers)
     while True:
         if (time.time() - t0) > timeout:
             break
         if all(queue.paused for queue in queues) or stop:
             break
         stop = True
-        for iq, queue in enumerate(queues):
+        for queue in queues:
             if queue.paused:
                 continue
-            for manager in managers[iq]:
+            for manager in queue.managers():
                 ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING) + queue.counts(mid=manager.id, state=TaskState.WAITING)
-                # print(ntasks, queue.summary())
+                # print(ntasks, queue.counts(mid=manager.id, state=TaskState.PENDING), queue.counts(mid=manager.id, state=TaskState.WAITING), stop, flush=True)
                 if ntasks:
                     stop = False
-                    # print('desipipe work --queue {} --mid {}'.format(queue.fn, manager.id))
-                    manager.spawn('desipipe work --queue {} --mid {}'.format(queue.fn, manager.id), ntasks=ntasks)
+                    # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
+                    manager.spawn('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id), ntasks=ntasks)
         time.sleep(timestep * random.uniform(0.8, 1.2))
 
 
@@ -1487,7 +1641,7 @@ action_from_args.actions = {
     'pause': 'Pause a queue: all workers and managers of provided queues (exclusively) stop after finishing their current task',
     'resume': 'Restart a queue: running manager processes (if any running) distribute again work among workers',
     'delete': 'Delete queue and data base',
-    'queues': 'List all queues',
-    'tasks': 'List all (failed) tasks of given queue',
-    'retry': 'Move all (killed) tasks into PENDING state, so they are rerun'
+    'queues': 'List queues',
+    'tasks': 'List (failed) tasks of given queue',
+    'retry': 'Move (killed) tasks into PENDING state, so they are rerun'
 }

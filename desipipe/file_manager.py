@@ -1,4 +1,5 @@
 import os
+import glob
 import re
 import copy
 import shutil
@@ -154,12 +155,14 @@ class FileEntry(BaseFile):
         options = self.options.copy()
         for name, values in kwargs.items():
             if name in options:
-                for value in values:
-                    if value not in options[name]:
-                        raise ValueError('{} is not in option {} ({})'.format(value, name, options[name]))
-                options[name] = values
+                ivalues = []
+                for value in _make_list(values):
+                    if value in options[name]:
+                        ivalues.append(value)
+                        # raise ValueError('{} is not in option {} ({})'.format(value, name, options[name]))
+                options[name] = ivalues
             else:
-                raise ValueError('Unknown option {}, select from {}'.format(name, list(self.options.keys())))
+                raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
         return self.clone(options=options)
 
     def __len__(self):
@@ -184,7 +187,7 @@ class File(BaseFile):
     """Class describing a single file (single option values)."""
 
     @property
-    def rpath(self):
+    def filepath(self):
         """Real path i.e. replacing placeholders in :attr:`path` by their value."""
         path = self.path
         environ = getattr(self, 'environ', {})
@@ -198,22 +201,24 @@ class File(BaseFile):
 
     def read(self, *args, **kwargs):
         """Read file from disk."""
-        return get_filetype(filetype=self.filetype, path=self.rpath).read(*args, **kwargs)
+        return get_filetype(filetype=self.filetype, path=self.filepath).read(*args, **kwargs)
 
     def write(self, *args, **kwargs):
         """
         Write file to disk. First written in a temporary directory, then moved to its final destination.
-        To write additional files, a method :attr:`save_attrs`, that should take the path to the directory as input,
+        To write additional files, a method :attr:`write_attrs`, that should take the path to the directory as input,
         can be added to the current instance.
         """
-        save_attrs = getattr(self, 'save_attrs', None)
-        rpath = self.rpath
-        dirname = os.path.dirname(rpath)
+        write_attrs = getattr(self, 'write_attrs', None)
+        filepath = self.filepath
+        dirname = os.path.dirname(filepath)
         utils.mkdir(dirname)
+        if write_attrs is not None:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                new_dir = write_attrs(tmp_dir) or dirname
+                shutil.copytree(tmp_dir, new_dir, dirs_exist_ok=True)
         with tempfile.TemporaryDirectory() as tmp_dir:
-            if save_attrs is not None:
-                save_attrs(tmp_dir)
-            path = os.path.join(tmp_dir, os.path.basename(rpath))
+            path = os.path.join(tmp_dir, os.path.basename(filepath))
             toret = get_filetype(filetype=self.filetype, path=path).write(*args, **kwargs)
             shutil.copytree(tmp_dir, dirname, dirs_exist_ok=True)
             return toret
@@ -221,17 +226,28 @@ class File(BaseFile):
     def __repr__(self):
         """String representation: class name and attributes."""
         di = self.to_dict()
-        di['path'] = self.rpath
+        di.pop('path')
+        di['filepath'] = self.filepath
         return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
 
 
-class FileDataBase(BaseClass):
+def prod(iterator):
+    toret, count = 1, 0
+    for item in iterator:
+        toret *= item
+        count += 1
+    if count:
+        return toret
+    return 0
+
+
+class FileEntryCollection(BaseClass):
 
     """A collection of file entries."""
 
     def __init__(self, data=None, string=None, parser=None, **kwargs):
         """
-        Initialize :class:`FileDataBase`.
+        Initialize :class:`FileEntryCollection`.
 
         Parameters
         ----------
@@ -263,6 +279,8 @@ class FileDataBase(BaseClass):
             with open(data, 'r') as file:
                 string += file.read()
         elif data is not None:
+            if isinstance(data, (FileEntryCollection, FileManager)):
+                data = data.data
             datad += [FileEntry(dd) for dd in data]
 
         if string is not None:
@@ -270,7 +288,7 @@ class FileDataBase(BaseClass):
 
         self.data = datad
 
-    def index(self, id=None, keywords=None, **kwargs):
+    def index(self, id=None, filetype=None, keywords=None, **kwargs):
         """
         Return indices for input identifiers, keywords, or options, e.g.
 
@@ -284,6 +302,10 @@ class FileDataBase(BaseClass):
         id : list, str, default=None
             List of file entry identifiers.
             Defaults to all identifiers (no selection).
+
+        filetype : list, str, default=None
+            List of file types.
+            Defaults to all file types (no selection).
 
         keywords : list, str, default=None
             List of keywords to search for in the file entry descriptions.
@@ -304,12 +326,16 @@ class FileDataBase(BaseClass):
         if id is not None:
             id = _make_list(id)
             id = [iid.lower() for iid in id]
+        if filetype is not None:
+            filetype = _make_list(filetype)
         if keywords is not None:
             keywords = _make_list(keywords)
-            keywords = [keyword.split() for keyword in keywords]
+            keywords = [keyword.lower().split() for keyword in keywords]
         index = []
         for ientry, entry in enumerate(self.data):
             if id is not None and entry.id.lower() not in id:
+                continue
+            if filetype is not None and entry.filetype.lower() not in filetype:
                 continue
             if keywords is not None:
                 description = entry.description.lower()
@@ -321,7 +347,7 @@ class FileDataBase(BaseClass):
             index.append(ientry)
         return index
 
-    def select(self, id=None, keywords=None, **kwargs):
+    def select(self, id=None, filetype=None, keywords=None, **kwargs):
         """
         Restrict to input identifiers, keywords, or options, e.g.
 
@@ -336,6 +362,10 @@ class FileDataBase(BaseClass):
             List of file entry identifiers.
             Defaults to all identifiers (no selection).
 
+        filetype : list, str, default=None
+            List of file types.
+            Defaults to all file types (no selection).
+
         keywords : list, str, default=None
             List of keywords to search for in the file entry descriptions.
             If a string contains several words, all of them must be in the description
@@ -349,10 +379,13 @@ class FileDataBase(BaseClass):
 
         Returns
         -------
-        new : FileDataBase
+        new : FileEntryCollection
             Selected data base.
         """
-        return self[self.index(id=id, keywords=keywords, **kwargs)]
+        new = self[self.index(id=id, filetype=filetype, keywords=keywords, **kwargs)]
+        for ientry, entry in enumerate(new.data):
+            new.data[ientry] = entry.select(**kwargs)  # select options
+        return new
 
     def get(self, *args, **kwargs):
         """
@@ -364,7 +397,10 @@ class FileDataBase(BaseClass):
         if len(new) == 1 and len(new[0]) == 1:
             for fi in new[0]:
                 return fi  # File instance
-        raise ValueError('"get" is not applicable as there are {} entries with {} files'.format(len(new), [len(entry) for entry in new]))
+        if prod(len(entry) for entry in new.data) == 0:
+            raise ValueError('"get" is not applicable as there are no matching entries')
+        else:
+            raise ValueError('"get" is not applicable as there are {} entries with multiple options:\n{}'.format(len(new.data), '\n'.join([repr(entry) for entry in new.data])))
 
     def __getitem__(self, index):
         """Return file entry(ies) at the input index(ices) in the list."""
@@ -373,7 +409,9 @@ class FileDataBase(BaseClass):
         else:
             data = self.data.__getitem__(index)
         if isinstance(data, list):
-            return self.__class__(data)
+            new = self.copy()
+            new.data = data
+            return new
         return data
 
     def __delitem__(self, index):
@@ -414,11 +452,11 @@ class FileDataBase(BaseClass):
 
             yaml.add_representer(list, list_rep)
 
-            yaml.dump_all([utils.dict_to_yaml(entry.to_dict()) for entry in self], file, default_flow_style=False)
+            yaml.dump_all([utils.dict_to_yaml(entry.to_dict()) for entry in self.data], file, default_flow_style=False)
 
     def __copy__(self):
         """Return a shallow copy (list is copied)."""
-        new = super(FileDataBase, self).__copy__()
+        new = super(FileEntryCollection, self).__copy__()
         new.data = self.data.copy()
         return new
 
@@ -437,35 +475,40 @@ class FileDataBase(BaseClass):
         if other == 0: return self.copy()
         return self.__add__(other)
 
+    @property
+    def filepaths(self):
+        """All file paths in file data base."""
+        toret = []
+        for entry in self.data:
+            toret += [ff.filepath for ff in entry]
+        return toret
 
-class FileManager(BaseClass):
+    def __repr__(self):
+        toret = self.__class__.__name__ + '(\n'
+        toret += ',\n'.join([repr(entry) for entry in self.data])
+        return toret + '\n)'
+
+
+class FileManager(FileEntryCollection):
 
     """File manager, main class to be used to get paths to / read / write files."""
 
     def __init__(self, database=(), environ=None):
-        self.db = FileDataBase()
-        for db in _make_list(database): self.db += FileDataBase(db)
+        dbc = FileEntryCollection()
+        for db in _make_list(database):
+            dbc += FileEntryCollection(db)
+        self.__dict__.update(dbc.__dict__)
         self.environ = get_environ(environ)
         environ = self.environ.to_dict(all=True)
-        for entry in self.db:
+        for entry in self.data:
             entry.environ = environ
 
-    def select(self, *args, **kwargs):
-        """Select entries in data base, see :meth:`DataBase.select`."""
-        new = self.copy()
-        new.db = self.db.select(*args, **kwargs)
-        return new
-
-    def __len__(self):
-        """Length, i.e. number of file entries."""
-        return len(self.db)
-
     def __iter__(self):
-        """Loop over options that are common to all file entries, and yield the (selected) :class:`FileDataBase` instances."""
-        if not self.db:
+        """Loop over options that are common to all file entries, and yield the (selected) :class:`FileEntryCollection` instances."""
+        if not self:
             return []
 
-        options = dict(self.db[0].options)
+        options = dict(self[0].options)
 
         def _intersect(options1, options2):
             options = {}
@@ -476,14 +519,29 @@ class FileManager(BaseClass):
                     options[name] = values
             return options
 
-        for entry in self.db:
+        for entry in self.data:
             options = _intersect(options, entry.options)
         environ = self.environ.to_dict(all=True)
         for values in itertools.product(*options.values()):
             opt = {name: values[iname] for iname, name in enumerate(options)}
-            database = FileDataBase()
-            for entry in self.db:
+            database = FileManager()
+            for entry in self.data:
                 fi = entry.clone(options={**entry.options, **opt})
                 fi.environ = environ
                 database.append(fi)
             yield database
+
+    @classmethod
+    def databases(cls, keywords=None):
+        if keywords is not None:
+            keywords = _make_list(keywords)
+            keywords = [keyword.lower().split() for keyword in keywords]
+        from .config import Config
+        file = Config().get('file', {})
+        filenames = _make_list(file.get('filename', []))
+        toret = []
+        for filename in filenames:
+            for fn in glob.glob(filename):
+                if any(all(kw in filename for kw in keyword) for keyword in keywords):
+                    toret.append(fn)
+        return toret

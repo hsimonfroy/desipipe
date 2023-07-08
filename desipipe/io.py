@@ -83,14 +83,14 @@ class CatalogFile(BaseFile):
     """Catalog file."""
     name = 'catalog'
 
-    def read(self, *args, **kwargs):
+    def read(self, **kwargs):
         """Read catalog."""
         from mpytools import Catalog
-        return Catalog.read(self.path, *args, **kwargs)
+        return Catalog.read(self.path, **kwargs)
 
-    def write(self, catalog, *args, **kwargs):
+    def write(self, catalog, **kwargs):
         """Write catalog."""
-        return catalog.write(self.path, *args, **kwargs)
+        return catalog.write(self.path, **kwargs)
 
 
 class PowerSpectrumFile(BaseFile):
@@ -98,17 +98,48 @@ class PowerSpectrumFile(BaseFile):
     """Power spectrum file."""
     name = 'power'
 
-    def read(self):
+    def read(self, mode='poles'):
         """Read power spectrum."""
-        from pypower import MeshFFTPower, PowerSpectrumMultipoles
+        from pypower import MeshFFTPower, PowerSpectrumStatistics
         with utils.LoggingContext(level='warning'):
             toret = MeshFFTPower.load(self.path)
-            if hasattr(toret, 'poles'):
-                toret = toret.poles
-            else:
-                toret = PowerSpectrumMultipoles.load(self.path)
+            try:
+                toret = getattr(toret, mode)
+            except AttributeError:
+                toret = PowerSpectrumStatistics.load(self.path)
         return toret
 
     def write(self, power):
         """Write power spectrum."""
         return power.save(self.path)
+
+
+class CorrelationFunctionFile(BaseFile):
+
+    """Correlation function file."""
+    name = 'correlation'
+
+    def read(self):
+        """Read correlation function."""
+        from pycorr import TwoPointCorrelationFunction
+        with utils.LoggingContext(level='warning'):
+            toret = TwoPointCorrelationFunction.load(self.path)
+        return toret
+
+    def write(self, corr):
+        """Write correlation function."""
+        return corr.save(self.path)
+
+
+class GenericFile(BaseFile):
+
+    """Generic file."""
+    name = 'generic'
+
+    def read(self, read, **kwargs):
+        """Read."""
+        return read(self.path, **kwargs)
+
+    def write(self, write, **kwargs):
+        """Write."""
+        write(self.path, **kwargs)

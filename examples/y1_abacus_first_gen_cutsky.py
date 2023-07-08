@@ -1,17 +1,17 @@
 from desipipe import Queue, Environment, TaskManager, FileManager
 
 
-queue = Queue('firstgen_y1_abacus', spawn=True)
+queue = Queue('abacus_first_gen_cutsky')
 environ = Environment('nersc-cosmodesi')
 
 tm = TaskManager(queue=queue, environ=environ)
 
-tm_compute = tm.clone(scheduler=dict(max_workers=10), provider=dict(mpiprocs_per_worker=64))
-tm_plot = tm.clone(scheduler=dict(max_workers=1), provider=dict(mpiprocs_per_worker=1))
+tm_compute = tm.clone(scheduler=dict(max_workers=10), provider=dict(provider='nersc', mpiprocs_per_worker=64))
+tm_plot = tm.clone(scheduler=dict(max_workers=1), provider=dict(provider='nersc', mpiprocs_per_worker=1))
 
 
 @tm_compute.python_app
-def compute_pk(data, randoms, output):
+def compute_power(data, randoms, output):
     from pypower import CatalogFFTPower
     from cosmoprimo.fiducial import DESI
     data = data.read()
@@ -28,7 +28,7 @@ def compute_pk(data, randoms, output):
 
 
 @tm_plot.python_app
-def plot_pk(powers):
+def plot_power(powers):
     import numpy as np
     from matplotlib import pyplot as plt
     ax = plt.gca()
@@ -40,11 +40,9 @@ def plot_pk(powers):
 
 if __name__ == '__main__':
 
-    keywords = 'y1 cutsky abacus'
-
-    fm = FileManager(['y1.yaml', 'me.yaml'], environ=environ).select(keywords=keywords)
+    fm = FileManager(['data/y1_first_gen.yaml'], environ=environ).select('abacus cutsky')
     outputs = []
     for fi in fm:
          # save metadata: python and slurm scripts in the output.base_dir directory
-        outputs.append(compute_pk(fi.get(filetype='catalog', field='data'), fi.get(filetype='catalog', field='randoms'), fi.get(filetype='power')))
-    plot_pk(outputs)
+        outputs.append(compute_power(fi.get(filetype='catalog', field='data'), fi.get(filetype='catalog', field='randoms'), fi.get(filetype='power')))
+    plot_power(outputs)
