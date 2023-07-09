@@ -1,16 +1,41 @@
-from desipipe import Queue, Environment, TaskManager, FileManager, setup_logging
+from desipipe import Queue, Environment, TaskManager, FileManager
 
 
-setup_logging()
-
-queue = Queue('y1_abacus_first_gen_hod')
+queue = Queue('y1_data')
 environ = Environment('nersc-cosmodesi')
 
 tm = TaskManager(queue=queue, environ=environ)
 
-tm_power = tm.clone(scheduler=dict(max_workers=10), provider=dict(provider='nersc', mpiprocs_per_worker=64))
+tm_corr = tm.clone(scheduler=dict(max_workers=10), provider=dict(provider='nersc', mpiprocs_per_worker=1))
 tm_profile = tm.clone(scheduler=dict(max_workers=10), provider=dict(provider='nersc', mpiprocs_per_worker=6, nodes_per_worker=0.2))
 tm_sample = tm.clone(scheduler=dict(max_workers=10), provider=dict(provider='nersc', mpiprocs_per_worker=32, nodes_per_worker=0.5))
+
+
+@tm_corr.python_app
+def compute_correlation(data, randoms, output):
+    import numpy as np
+    from pycorr import TwoPointCorrelationFunction
+    from cosmoprimo.fiducial import DESI
+    zrange = data.options['zrange']
+    data = data.read()
+    cosmo = DESI()
+    mask = (data['Z'] >= zrange[0]) & (data['Z'] < zrange[1])
+    data_positions = [data['RA'][mask], data['DEC'][mask], cosmo.comoving_radial_distance(data['Z'][mask])]
+    data_weights = (data['WEIGHT'] * data['WEIGHT_FKP'])[mask]
+    edges = (np.linspace(0., 200, 201), np.linspace(-1., 1., 201))
+    corr = 0
+    for iran in range(2):
+        randoms = randoms.get(iran=iran).read()
+        mask = (randoms['Z'] >= zrange[0]) & (randoms['Z'] < zrange[1])
+        randoms_positions = [randoms['RA'][mask], randoms['DEC'][mask], cosmo.comoving_radial_distance(randoms['Z'][mask])]
+        randoms_weights = (randoms['WEIGHT'] * randoms['WEIGHT_FKP'])[mask]
+        corr += TwoPointCorrelationFunction(mode='smu', edges=edges, data_positions1=data_positions, randoms_positions1=randoms_positions,
+                                            data_weights1=data_weights, randoms_weights1=randoms_weights,
+                                            position_type='rdd', los='midpoint', nthreads=64)
+    corr.D1D2.attrs['z'] = (data['Z'][mask] * data_weights).cmean() / data_weights.cmean()
+    corr.D1D2.attrs['tracer'] = tracer
+    output.write(corr)
+    return output
 
 
 def get_template(template_name='standard', z=0.8, klim=None):
@@ -106,15 +131,19 @@ def get_fit_setup(tracer, ells=None, theory_name='velocileptors'):
     return z, b0, klim, slim
 
 
-def get_observable_likelihood(data=None, covariance=None, wmatrix=None, theory_name='velocileptors', ells=(0, 2, 4), template_name='shapefit', observable_name='power', tracer='LRG',
+def get_observable_likelihood(data=None, covariance=None, wmatrix=None, theory_name='velocileptors', ells=(0, 2, 4), template_name='shapefit', observable_name='corr', tracer='LRG',
                               solve=True, save_emulator=False, emulator_fn=None):
 
     """Return the power spectrum likelihood, optionally computing the emulator (if ``save_emulator``)."""
 
+    import numpy as np
     from desilike.observables.galaxy_clustering import TracerPowerSpectrumMultipolesObservable, TracerCorrelationFunctionMultipolesObservable
     from desilike.likelihoods import ObservablesGaussianLikelihood
+    from desilike import utils
 
+    tracer = data.D1D2.attrs['tracer']
     z, b0, klim, slim = get_fit_setup(tracer, ells=ells, theory_name=theory_name)
+    z = data.D1D2.attrs['z']
 
     from cosmoprimo.fiducial import DESI
     fiducial = DESI()
@@ -136,9 +165,17 @@ def get_observable_likelihood(data=None, covariance=None, wmatrix=None, theory_n
         theory.init.update(pt=calculator)
 
     if observable_name == 'power':
+        if utils.is_path(covariance):
+            covariance = np.loadtxt(covariance)
+            step = 0.005
+            covariance = cut_matrix(covariance, np.arange(0. + step / 2., 0.4 + step / 3., step), (0, 2, 4), slim)
         observable = TracerPowerSpectrumMultipolesObservable(klim=klim, data=data, covariance=covariance, wmatrix=wmatrix, kinlim=(0., 0.25), theory=theory)
 
     if observable_name == 'corr':
+        if utils.is_path(covariance):
+            covariance = np.loadtxt(covariance)
+            step = 4.
+            covariance = cut_matrix(covariance, np.arange(20 + step / 2., 200 + step / 3., step), (0, 2, 4), slim)
         observable = TracerCorrelationFunctionMultipolesObservable(slim=slim, data=data, covariance=covariance, theory=theory)
 
     likelihood = ObservablesGaussianLikelihood(observables=[observable], scale_covariance=1. / 25.)  # likelihood is a callable that returns the log-posterior
@@ -162,49 +199,15 @@ def get_observable_likelihood(data=None, covariance=None, wmatrix=None, theory_n
     return likelihood
 
 
-@tm_power.python_app
-def compute_power(data, output):
-    import numpy as np
-    from mockfactory import utils
-    from pypower import CatalogFFTPower
-
-    z = float(data.options['z'])
-    data = data.read()
-    positions = np.column_stack([data[name] for name in ['x', 'y', 'z']])
-    velocities = np.column_stack([data[name] for name in ['vx', 'vy', 'vz']])
-    from cosmoprimo.fiducial import DESI
-    cosmo = DESI()
-    a = 1. / (1. + z)
-    E = cosmo.efunc(z)
-    los = output.options['z']
-    los = [1. * (los == axis) for axis in 'xyz']
-    positions += utils.vector_projection(velocities / (100. * a * E), los)
-    power = CatalogFFTPower(data_positions1=positions, position_type='pos',
-                            boxsize=2000., boxcenter=1000., nmesh=512, resampler='tsc', interlacing=3, wrap=True)
-    power.attrs['z'] = z
-    output.save(power)
-    return output
-
-
-@tm_power.python_app
-def compute_window(power, output):
-    import numpy as np
-    from pypower import MeshFFTWindow
-    power = power.read()
-    edgesin = np.linspace(0., 0.5, 1001)
-    window = MeshFFTWindow(edgesin=edgesin, power_ref=power, periodic=True)
-    output.save(window.save)
-
-
 @tm_sample.python_app
 def emulate(data, get_observable_likelihood=get_observable_likelihood, **kwargs):
-    get_observable_likelihood(data=[dd.get().read() for dd in data], save_emulator=True, **kwargs)
+    get_observable_likelihood(data=sum(dd.get().read().normalize() for dd in data), save_emulator=True, **kwargs)
 
 
 @tm_profile.python_app
 def profile(data, output, get_observable_likelihood=get_observable_likelihood, **kwargs):
     from desilike.profilers import MinuitProfiler
-    likelihood = get_observable_likelihood(data=[dd.get().read() for dd in data], save_emulator=False, **kwargs)
+    likelihood = get_observable_likelihood(data=sum(dd.get().read().normalize() for dd in data), save_emulator=False, **kwargs)
     profiler = MinuitProfiler(likelihood, seed=42)
     profiles = profiler.maximize(niterations=10)
     output.write(profiles.save)
@@ -213,7 +216,7 @@ def profile(data, output, get_observable_likelihood=get_observable_likelihood, *
 @tm_sample.python_app
 def sample(data, output, get_observable_likelihood=get_observable_likelihood, resume=False, **kwargs):
     from desilike.samplers import EmceeSampler
-    likelihood = get_observable_likelihood(data=[dd.get().read() for dd in data], save_emulator=False, **kwargs)
+    likelihood = get_observable_likelihood(data=sum(dd.get().read().normalize() for dd in data), save_emulator=False, **kwargs)
     save_fn = output.filepaths
     chains = None
     if resume: chains = save_fn
@@ -221,28 +224,65 @@ def sample(data, output, get_observable_likelihood=get_observable_likelihood, re
     sampler.run(min_iterations=2000, check={'max_eigen_gr': 0.03})
 
 
+def cut_matrix(cov, xcov, ellscov, xlim):
+    """
+    The function cuts a matrix based on specified indices and returns the resulting submatrix.
+
+    Parameters
+    ----------
+    cov : 2D array
+        A square matrix representing the covariance matrix.
+
+    xcov : 1D array
+        x-coordinates in the covariance matrix.
+
+    ellscov : list
+        Multipoles in the covariance matrix.
+
+    xlim : tuple
+        `xlim` is a dictionary where the keys are `ell` and the values are tuples of two floats
+        representing the lower and upper limits of `xcov` for that `ell` value to be returned.
+
+    Returns
+    -------
+    cov : array
+        Subset of the input matrix `cov`, based on `xlim`.
+        The subset is determined by selecting rows and columns of `cov` corresponding to the
+        values of `ell` and `xcov` that fall within the specified `xlim` range.
+    """
+    import numpy as np
+    assert len(cov) == len(xcov) * len(ellscov), 'Input matrix has size {}, different than {} x {}'.format(len(cov), len(xcov), len(ellscov))
+    indices = []
+    for ell, xlim in xlim.items():
+        index = ellscov.index(ell) * len(xcov) + np.arange(len(xcov))
+        index = index[(xcov >= xlim[0]) & (xcov <= xlim[1])]
+        indices.append(index)
+    indices = np.concatenate(indices, axis=0)
+    return cov[np.ix_(indices, indices)]
+
+
 if __name__ == '__main__':
 
-    fm = FileManager('files/y1_first_gen.yaml', environ=environ)
-    tracer = 'LRG'
-    fm_abacus = fm.select(keywords='abacus box alternative hod', tracer=tracer)
-    data = {}
-    for ihod in range(1, 9):
-        data[ihod] = []
-        for fi in fm_abacus.select(filetype=['catalog', 'power'], ihod=ihod):
-            for los in ['x', 'y', 'z']:
-                file = fi.get(filetype='power', los=los)
-                file = compute_power(fi.get(filetype='catalog'), file)
-                data[ihod].append(file)
-    compute_window(data[1], fm.get(keywords='box 2gpc window'))
+    fm = FileManager('files/y1_data.yaml', environ=environ)
 
-    fm_ez = fm.select(keywords=['y1 ez box'], tracer=tracer)
-    emulator_fn = '_emulators/emulator.npy'
-    kwargs = dict(covariance=fm_ez.filepaths, wmatrix=fm.get(keywords='window box abacus').filepath,
-                  theory_name='velocileptors', ells=(0, 2, 4),
-                  template_name='shapefit', observable_name='power',
-                  tracer=tracer, emulator_fn=emulator_fn)
-    emulate(data[1], **kwargs)
-    for ihod, data in data.items():
-        profile(data, fm_abacus.get(keywords='profile', ihod=ihod), **kwargs)
-        sample(data, fm_abacus.select(keywords='chain', ihod=ihod), **kwargs)
+    for tracer in ['LRG']:
+        for zrange in [(0.4, 1.1)]:
+            fmt = fm.select(tracer=tracer)
+            data = []
+            version = 'v0.4'
+            for fi in fmt.select(filetype=['catalog', 'correlation'], version=version):  # iterate on NGC / SGC
+                file = fi.get(filetype='correlation', zrange=zrange)
+                file = compute_correlation(fi.get(keywords='catalog data'), fi.select(keywords='catalog randoms'), file)
+                data.append(file)
+
+            emulator_fn = '_emulators/emulator_{tracer}_{zrange[0]:.1f}_{zrange[1]:.1f}.npy'.format(tracer=tracer, zrange=zrange)
+            fmz = fmt.select(zrange=zrange)
+            covariance = fmz.get(keywords='covariance correlation', region='GCcomb', version='v0.1').filepath
+            kwargs = dict(covariance=covariance, wmatrix=None,
+                          theory_name='velocileptors', ells=(0, 2, 4),
+                          template_name='shapefit', observable_name='corr',
+                          emulator_fn=emulator_fn)
+
+            emulate(data, **kwargs)
+            profile(data, fmz.get(keywords='profile', region='GCcomb', version=version), **kwargs)
+            sample(data, fmz.select(keywords='chain', region='GCcomb', version=version), **kwargs)

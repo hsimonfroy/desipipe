@@ -1,7 +1,8 @@
-from desipipe import Queue, Environment, TaskManager, FileManager
+from desipipe import Queue, Environment, TaskManager, FileManager, setup_logging
 
+setup_logging()
 
-queue = Queue('abacus_first_gen_cutsky')
+queue = Queue('y1_abacus_first_gen_cutsky')
 environ = Environment('nersc-cosmodesi')
 
 tm = TaskManager(queue=queue, environ=environ)
@@ -40,9 +41,9 @@ def plot_power(powers):
 
 if __name__ == '__main__':
 
-    fm = FileManager(['data/y1_first_gen.yaml'], environ=environ).select('abacus cutsky')
+    fm = FileManager('files/y1_first_gen.yaml', environ=environ).select('abacus cutsky')
     outputs = []
     for fi in fm:
          # save metadata: python and slurm scripts in the output.base_dir directory
-        outputs.append(compute_power(fi.get(filetype='catalog', field='data'), fi.get(filetype='catalog', field='randoms'), fi.get(filetype='power')))
+        outputs.append(compute_power(fi.get(filetype='catalog', keywords='data'), fi.get(filetype='catalog', keywords='randoms'), fi.get(filetype='power')))
     plot_power(outputs)

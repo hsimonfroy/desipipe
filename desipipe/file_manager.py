@@ -117,7 +117,8 @@ class BaseFile(BaseClass):
 
     def __repr__(self):
         """String representation: class name and attributes."""
-        return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in self.to_dict().items()]))
+        #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in self.to_dict().items()]))
+        return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in self.to_dict().items()]))
 
 
 def _make_list(values):
@@ -127,6 +128,12 @@ def _make_list(values):
     if not hasattr(values, '__iter__') or isinstance(values, str):
         values = [values]
     return list(values)
+
+
+def _make_list_options(values):
+    if not isinstance(values, (list, range)):
+        return [values]
+    return values
 
 
 class FileEntry(BaseFile):
@@ -141,7 +148,7 @@ class FileEntry(BaseFile):
             for name, values in self.options.items():
                 if isinstance(values, str) and re.match(r'range\((.*)\)$', values):
                     values = eval(values)
-                options[name] = _make_list(values)
+                options[name] = _make_list_options(values)
             self.options = options
 
     def select(self, **kwargs):
@@ -152,12 +159,18 @@ class FileEntry(BaseFile):
 
         returns a new entry, with option 'region' taking values in ``['NGC']``.
         """
+        def eq(test, ref):
+            if type(test) is not type(ref):
+                if hasattr(test, '__iter__') and hasattr(ref, '__iter__'):
+                    return test == type(test)(ref)
+            return test == ref
+
         options = self.options.copy()
         for name, values in kwargs.items():
             if name in options:
                 ivalues = []
-                for value in _make_list(values):
-                    if value in options[name]:
+                for value in _make_list_options(values):
+                    if any(eq(value, ref) for ref in options[name]):
                         ivalues.append(value)
                         # raise ValueError('{} is not in option {} ({})'.format(value, name, options[name]))
                 options[name] = ivalues
@@ -228,7 +241,8 @@ class File(BaseFile):
         di = self.to_dict()
         di.pop('path')
         di['filepath'] = self.filepath
-        return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
+        #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
+        return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
 
 
 def prod(iterator):
@@ -324,12 +338,12 @@ class FileEntryCollection(BaseClass):
             List of indices.
         """
         if id is not None:
-            id = _make_list(id)
+            id = _make_list_options(id)
             id = [iid.lower() for iid in id]
         if filetype is not None:
-            filetype = _make_list(filetype)
+            filetype = _make_list_options(filetype)
         if keywords is not None:
-            keywords = _make_list(keywords)
+            keywords = _make_list_options(keywords)
             keywords = [keyword.lower().split() for keyword in keywords]
         index = []
         for ientry, entry in enumerate(self.data):
@@ -341,7 +355,10 @@ class FileEntryCollection(BaseClass):
                 description = entry.description.lower()
                 if not any(all(kw in description for kw in keyword) for keyword in keywords):
                     continue
-            entry = entry.select(**kwargs)
+            try:
+                entry = entry.select(**kwargs)
+            except ValueError:
+                continue
             if not entry:
                 continue
             index.append(ientry)
@@ -484,9 +501,7 @@ class FileEntryCollection(BaseClass):
         return toret
 
     def __repr__(self):
-        toret = self.__class__.__name__ + '(\n'
-        toret += ',\n'.join([repr(entry) for entry in self.data])
-        return toret + '\n)'
+        return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join([repr(entry) for entry in self.data]))
 
 
 class FileManager(FileEntryCollection):

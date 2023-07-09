@@ -1,9 +1,17 @@
-description: Y1 First Generation Abacus fiber assigned data and randoms cutsky catalogs
+description: Y1 First Generation Abacus fiber assigned data cutsky catalogs
 id: catalog_abacus_first_generation_cutsky_y1
 filetype: catalog
-path: ${DESICFS}/survey/catalogs/main/mocks/FirstGenMocks/AbacusSummit/Y1v1/mock{imock:d}/LSScats/{tracer}_{region}_clustering.{field}.fits
+path: ${DESICFS}/survey/catalogs/main/mocks/FirstGenMocks/AbacusSummit/Y1v1/mock{imock:d}/LSScats/{tracer}_{region}_clustering.dat.fits
 options:
-  field: [data, randoms]
+  imock: range(0, 25, 1)
+  tracer: [LRG, ELG, QSO]
+  region: [N, S]
+---
+description: Y1 First Generation Abacus fiber assigned randoms cutsky catalogs
+id: catalog_abacus_first_generation_cutsky_y1
+filetype: catalog
+path: ${DESICFS}/survey/catalogs/main/mocks/FirstGenMocks/AbacusSummit/Y1v1/mock{imock:d}/LSScats/{tracer}_{region}_{iran:d}_clustering.ran.fits
+options:
   imock: range(0, 25, 1)
   tracer: [LRG, ELG, QSO]
   region: [N, S]
@@ -88,7 +96,7 @@ description: Full shape fits (chains) to 2Gpc Abacus boxes with alternative HODs
 author: adematti
 id: chains_box_2gpc_hod
 filetype: generic
-path: ${DESICFS}/users/adematti/desi_mock_challenge/FirstGenMocks/AbacusSummit/CubicBox/{tracer}/z0.800/HOD/chain_HOD{ihod:d}_{:d}.npy
+path: ${DESICFS}/users/adematti/desi_mock_challenge/FirstGenMocks/AbacusSummit/CubicBox/{tracer}/z0.800/HOD/chain_HOD{ihod:d}_{ichain:d}.npy
 options:
   ihod: range(1, 9)
   tracer: [LRG]

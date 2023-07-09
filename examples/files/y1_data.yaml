@@ -1,0 +1,63 @@
+description: Y1 blinded data catalogs
+id: catalog_data_blinded_y1
+filetype: catalog
+path: ${DESICFS}/survey/catalogs/Y1/LSS/iron/LSScats/{version}/blinded/{tracer}_{region}_clustering.dat.fits
+options:
+  tracer: [BGS_BRIGHT-21.5, LRG, ELG_LOPnotqso, QSO]
+  region: [NGC, SGC]
+  version: [v0.1, v0.2, v0.3, v0.4]
+---
+description: Y1 blinded randoms catalogs
+id: catalog_data_blinded_y1
+filetype: catalog
+path: ${DESICFS}/survey/catalogs/Y1/LSS/iron/LSScats/{version}/blinded/{tracer}_{region}_{iran:d}_clustering.ran.fits
+options:
+  tracer: [BGS_BRIGHT-21.5, LRG, ELG_LOPnotqso, QSO]
+  region: [NGC, SGC]
+  version: [v0.1, v0.2, v0.3, v0.4]
+  iran: range(0, 18)
+---
+description: Correlation functions smu of blinded data
+author: adematti
+id: correlation_blinded_data
+filetype: correlation
+path: ${DESICFS}/users/adematti/desi_data/{version}/correlation_smu_{tracer}_{zrange[0]:.1f}_{zrange[1]:.1f}_{region}.npy
+options:
+  tracer: [LRG]
+  zrange: [[0.4, 1.1], [0.4, 0.6], [0.6, 0.8], [0.8, 1.1]]
+  region: [NGC, SGC]
+  version: [v0.1, v0.2, v0.3, v0.4]
+---
+description: Covariance matrix for correlation functions of blinded data
+author: mrash
+id: covariance_correlation_blinded_data
+filetype: text
+path: ${DESICFS}/users/mrash/RascalC/Y1/blinded/{version}/xi024_{tracer}_{region}_{zrange[0]:.1f}_{zrange[1]:.1f}_default_FKP_lin4_s20-200_cov_RascalC_Gaussian.txt
+options:
+  tracer: [LRG]
+  zrange: [[0.4, 1.1], [0.4, 0.6], [0.6, 0.8], [0.8, 1.1]]
+  region: [NGC, SGC, GCcomb]
+  version: [v0.1]
+---
+description: Full shape fits (profiles) to blinded data
+author: adematti
+id: profiles_blinded_data
+filetype: generic
+path: ${DESICFS}/users/adematti/desi_data/{version}/profiles_{tracer}_{region}.npy
+options:
+  tracer: [LRG]
+  zrange: [[0.4, 1.1], [0.4, 0.6], [0.6, 0.8], [0.8, 1.1]]
+  region: [NGC, SGC, GCcomb]
+  version: [v0.1, v0.2, v0.3, v0.4]
+---
+description: Full shape fits (chains) to blinded data
+author: adematti
+id: chains_blinded_data
+filetype: generic
+path: ${DESICFS}/users/adematti/desi_data/{version}/chain_{tracer}_{region}_{zrange[0]:.1f}_{zrange[1]:.1f}_{ichain:d}.npy
+options:
+  tracer: [LRG]
+  zrange: [[0.4, 1.1], [0.4, 0.6], [0.6, 0.8], [0.8, 1.1]]
+  region: [NGC, SGC, GCcomb]
+  version: [v0.1, v0.2, v0.3, v0.4]
+  ichain: range(8)
