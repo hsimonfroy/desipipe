@@ -259,7 +259,7 @@ class FileEntryCollection(BaseClass):
 
     """A collection of file entries."""
 
-    def __init__(self, data=None, string=None, parser=None, **kwargs):
+    def __init__(self, data=None, string=None, parser=None, environ=None, **kwargs):
         """
         Initialize :class:`FileEntryCollection`.
 
@@ -286,7 +286,8 @@ class FileEntryCollection(BaseClass):
         if parser is None:
             self.parser = yaml_parser
 
-        datad = []
+        self.environ = dict(environ or {})
+        self.data = []
 
         if utils.is_path(data):
             if string is None: string = ''
@@ -295,12 +296,12 @@ class FileEntryCollection(BaseClass):
         elif data is not None:
             if isinstance(data, (FileEntryCollection, FileManager)):
                 data = data.data
-            datad += [FileEntry(dd) for dd in data]
+            for dd in data:
+                self.append(dd)
 
         if string is not None:
-            datad += [FileEntry(dd) for dd in self.parser(string, **kwargs)]
-
-        self.data = datad
+            for dd in self.parser(string, **kwargs):
+                self.append(dd)
 
     def index(self, id=None, filetype=None, keywords=None, **kwargs):
         """
@@ -426,9 +427,7 @@ class FileEntryCollection(BaseClass):
         else:
             data = self.data.__getitem__(index)
         if isinstance(data, list):
-            new = self.copy()
-            new.data = data
-            return new
+            return self.clone(data=data)
         return data
 
     def __delitem__(self, index):
@@ -445,18 +444,22 @@ class FileEntryCollection(BaseClass):
     def __len__(self):
         """Length, i.e. number of file entries."""
         return len(self.data)
-
+            
     def insert(self, index, entry):
         """
         Insert a new file entry, at input index.
         ``entry`` may be e.g. a dictionary, or a :class:`FileEntry` instance,
         in which case a shallow copy is made.
         """
-        self.data.insert(index, FileEntry(entry))
+        entry = FileEntry(entry)
+        entry.environ = self.environ
+        self.data.insert(index, entry)
 
     def append(self, entry):
         """Append an input file entry, which may be e.g. a dictionary, or a :class:`FileEntry` instance."""
-        self.data.append(FileEntry(entry))
+        entry = FileEntry(entry)
+        entry.environ = self.environ
+        self.data.append(entry)
 
     def write(self, fn):
         """Write data base to *yaml* file ``fn``."""
@@ -472,16 +475,33 @@ class FileEntryCollection(BaseClass):
             yaml.dump_all([utils.dict_to_yaml(entry.to_dict()) for entry in self.data], file, default_flow_style=False)
 
     def __copy__(self):
-        """Return a shallow copy (list is copied)."""
+        """Return a shallow copy (data list is copied)."""
         new = super(FileEntryCollection, self).__copy__()
         new.data = self.data.copy()
         return new
 
+    def update(self, **kwargs):
+        if 'data' in kwargs:
+            self.data = []
+            for entry in kwargs.pop('data'): self.append(entry)
+        if 'environ' in kwargs:
+            environ = kwargs.pop('environ')
+            for entry in self.data:
+                entry.environ = environ
+        if kwargs:
+            raise ValueError('Unrecognized arguments {}'.format(kwargs))
+    
+    def clone(self, *args, **kwargs):
+        """Return an updated copy."""
+        new = self.copy()
+        new.update(*args, **kwargs)
+        return new
+
     def __add__(self, other):
         """Sum of `self`` + ``other``."""
-        new = self.__class__()
-        new.data += self.data
-        new.data += other.data
+        new = self.copy()
+        for entry in other.data:
+            new.append(entry)
         return new
 
     def __radd__(self, other):
@@ -509,14 +529,16 @@ class FileManager(FileEntryCollection):
     """File manager, main class to be used to get paths to / read / write files."""
 
     def __init__(self, database=(), environ=None):
-        dbc = FileEntryCollection()
+        environ = get_environ(environ).to_dict(all=True)
+        dbc = FileEntryCollection(environ=environ)
         for db in _make_list(database):
             dbc += FileEntryCollection(db)
         self.__dict__.update(dbc.__dict__)
-        self.environ = get_environ(environ)
-        environ = self.environ.to_dict(all=True)
-        for entry in self.data:
-            entry.environ = environ
+    
+    def update(self, **kwargs):
+        if 'environ' in kwargs:
+            kwargs['environ'] = get_environ(kwargs['environ']).to_dict(all=True)
+        super(FileManager, self).update(**kwargs)
 
     def __iter__(self):
         """Loop over options that are common to all file entries, and yield the (selected) :class:`FileEntryCollection` instances."""
@@ -536,16 +558,14 @@ class FileManager(FileEntryCollection):
 
         for entry in self.data:
             options = _intersect(options, entry.options)
-        environ = self.environ.to_dict(all=True)
         for values in itertools.product(*options.values()):
             opt = {name: values[iname] for iname, name in enumerate(options)}
-            database = FileManager()
+            database = self.clone(data=[])
             for entry in self.data:
-                fi = entry.clone(options={**entry.options, **opt})
-                fi.environ = environ
-                database.append(fi)
+                entry = entry.clone(options={**entry.options, **opt})
+                database.append(entry)
             yield database
-
+            
     @classmethod
     def databases(cls, keywords=None):
         if keywords is not None:

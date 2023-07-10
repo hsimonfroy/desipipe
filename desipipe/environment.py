@@ -121,16 +121,16 @@ def get_environ(environ=None, data=None, **kwargs):
         return environ
     if isinstance(environ, dict):
         environ, data = environ.pop('environ', None), {**environ, **(data or {})}
-    from .config import Config
-    config = Config().get('environ', {})
     if environ is None:
+        from .config import Config
+        config = Config().get('environ', {})
         if isinstance(config, str):
             environ = config
             config = {}
         else:
             environ = config.get('name', 'base')
-    data = {**config.get('data', {}), **(data or {})}
-    kwargs.setdefault('command', config.get('command', None))
+        data = {**config.get('data', {}), **(data or {})}
+        kwargs.setdefault('command', config.get('command', None))
     return BaseEnvironment._registry[environ](data=data, **kwargs)
 
 

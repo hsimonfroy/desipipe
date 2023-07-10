@@ -1271,9 +1271,9 @@ def decorator(func):
     """
 
     def wrapper(self, *args, **kwargs):
-        if kwargs:
+        if kwargs or not args:
             if args:
-                raise ValueError('unexpected args')
+                raise ValueError('unexpected args: {}, {}'.format(args, kwargs))
 
             def wrapper(app):
                 return func(self, app, **kwargs)
@@ -1281,7 +1281,7 @@ def decorator(func):
             return wrapper
 
         if len(args) != 1:
-            raise ValueError('unexpected args')
+            raise ValueError('unexpected args: {}'.format(args))
 
         return func(self, args[0], **kwargs)
 
