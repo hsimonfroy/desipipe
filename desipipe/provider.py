@@ -192,18 +192,27 @@ class SlurmProvider(BaseProvider):
             cmd = self.mpiexec.format(nodes=nodes, mpiprocs=self.mpiprocs_per_worker * workers, cmd=cmd) + ' --mpisplits {:d}'.format(workers)
         else:
             cmd = [self.mpiexec.format(nodes=int(self.nodes_per_worker), mpiprocs=self.mpiprocs_per_worker, cmd=cmd)] * workers
-            cmd = ' & '.join(cmd) + ' & wait'
+            cmd = ' & '.join(cmd)
+            if workers: cmd += ' & wait'
         cmd = self.environ.to_script(sep=' ; ') + ' ; ' + cmd
-        # --parsable to get jobid (optionally, cluster name)
+        # -- parsable to get jobid (optionally, cluster name)
         # -- wrap to pass the job
         cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', cmd]
-        #cmd = ['sbatch', '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', cmd]
+        # print(' '.join(cmd))
         proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         self.processes.append((proc.stdout.split(',')[0].strip(), workers))  # jobid, workers
 
     def nrunning(self):
         """Number of running workers."""
-        jobids = [line.split()[0].strip() for line in subprocess.run(['sqs'], check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')[1:] if line]
+        sqs = subprocess.run(['sqs'], check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')
+        istate = sqs[0].index('ST')
+        jobids = []
+        for line in sqs[1:]:
+            if line:
+                state = line[istate:]
+                if not state.startswith('GC'):
+                    jobids.append(line.split()[0].strip())
+        # print(jobids, self.processes)
         return sum(workers * (jobid in jobids) for jobid, workers in self.processes)
 
     def nodes(self, workers=1):
@@ -234,7 +243,7 @@ class NERSCProvider(SlurmProvider):
         Beyond this number of allocated nodes, cost increases linearly.
     """
     name = 'nersc'
-    _defaults = {**SlurmProvider._defaults, 'threshold_nodes': 10}
+    _defaults = {**SlurmProvider._defaults, 'threshold_nodes': 1}
 
     def __init__(self, *args, **kwargs):
         super(NERSCProvider, self).__init__(*args, **kwargs)

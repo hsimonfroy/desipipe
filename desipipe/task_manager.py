@@ -254,9 +254,6 @@ class Task(BaseClass):
     app : BaseApp
         Application.
 
-    args : tuple
-        Tuple of arguments to be passed to :meth:`BaseApp.run`.
-
     kwargs : dict
         Dictionary of arguments to be passed to :meth:`BaseApp.run`.
 
@@ -353,7 +350,7 @@ class Task(BaseClass):
         new.update(*args, **kwargs)
         return new
 
-    def run(self):
+    def run(self, **kwargs):
         """
         Run task:
 
@@ -386,7 +383,7 @@ class Task(BaseClass):
             return self.app.write_dir  # destination
 
         File.write_attrs = write_attrs  # save main script and versions whenever a file is written to disk
-        self.errno, self.result, self.err, self.out, self.versions = self.app.run(**self.kwargs)
+        self.errno, self.result, self.err, self.out, self.versions = self.app.run(**{**self.kwargs, **kwargs})
         File.write_attrs = None
         if self.errno:
             if self.errno == signal.SIGTERM:
@@ -654,7 +651,6 @@ class Queue(BaseClass):
     def _add_manager(self, manager):
         # """Add input :class:`TaskManager` to the data base (or replace if already there, as specified by :attr:`TaskManager.id`)."""
         query = 'INSERT OR REPLACE INTO managers (mid, manager) VALUES (?, ?)'
-        state = manager.__getstate__()
         self._query([query, (manager.id, TaskManagerPickler.dumps(manager))])
         self.db.commit()
 
@@ -799,8 +795,8 @@ class Queue(BaseClass):
                 return
 
         # Count number of requires that are still pending or waiting
-        query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.tid WHERE d.tid=? AND t.state IN (?, ?, ?)'
-        row = self._query([query, (tid, TaskState.PENDING, TaskState.WAITING, TaskState.RUNNING)]).fetchone()
+        query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.tid WHERE d.tid=? AND t.state IN (?, ?, ?, ?, ?, ?)'
+        row = self._query([query, (tid, TaskState.WAITING, TaskState.PENDING, TaskState.RUNNING, TaskState.FAILED, TaskState.KILLED, TaskState.UNKNOWN)]).fetchone()
         self._release_lock()
         if row is None:
             return
@@ -1191,6 +1187,8 @@ def select_modules(modules):
 
 _modules = select_modules(sys.modules)
 
+_sout, _serr = io.StringIO(), io.StringIO()
+
 
 class PythonApp(BaseApp):
     """
@@ -1205,10 +1203,18 @@ class PythonApp(BaseApp):
     """
     def run(self, *args, **kwargs):
         """Run app with input ``args`` and ``kwargs``."""
-        errno, result = 0, None
+        errno, result, err, out, versions = 0, None, '', '', {}
         if self.dirname not in sys.path:
             sys.path.insert(0, self.dirname)
-        with io.StringIO() as out, io.StringIO() as err, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        
+        def clear(*streams):
+            for stream in streams:
+                stream.seek(0)
+                stream.truncate(0)
+        
+        # we shall use previous streams, as they may have been imported already
+        clear(_sout, _serr)
+        with contextlib.redirect_stdout(_sout), contextlib.redirect_stderr(_serr):
             try:
                 result = self.func(*args, **kwargs)
             except Exception as exc:
@@ -1216,7 +1222,10 @@ class PythonApp(BaseApp):
                 traceback.print_exc(file=err)
                 # raise exc
             versions = self.versions()
-            return errno, result, err.getvalue(), out.getvalue(), versions
+            out, err = _sout.getvalue(), _serr.getvalue()
+        clear(_sout, _serr)
+        
+        return errno, result, err, out, versions
 
     def versions(self):
         """Return module versions."""
@@ -1401,6 +1410,14 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
     mpicomm : MPI communicator, default=mpi.COMM_WORLD
         The MPI communicator.
     """
+    def exit_killed(*args):
+        task.state = TaskState.KILLED
+        queue.add(task, replace=True)
+        exit()
+    
+    signal.signal(signal.SIGINT, exit_killed)
+    signal.signal(signal.SIGTERM, exit_killed)
+
     if mpicomm is None:
         from mpi4py import MPI
         mpicomm = MPI.COMM_WORLD
@@ -1409,6 +1426,7 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
             if (mpicomm.size * isplit // mpisplits) <= mpicomm.rank < (mpicomm.size * (isplit + 1) // mpisplits):
                 color = isplit
         mpicomm = mpicomm.Split(color, 0)
+    MPI.COMM_WORLD = mpicomm  # a bit hacky
     while True:
         task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
@@ -1417,7 +1435,11 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
         task = TaskUnpickler.loads(mpicomm.bcast(task, root=0))
         if task is None:
             break
-        task.run()
+        kwargs = {}
+        if 'mpicomm' in task.kwargs and task.kwargs['mpicomm'] is None:
+            kwargs['mpicomm'] = mpicomm
+        task.run(**kwargs)
+        mpicomm.barrier()
         # print(task.out)
         # task.update(jobid=environ.get('DESIPIPE_JOBID', ''))
         if mpicomm.rank == 0:
@@ -1443,24 +1465,28 @@ def spawn(queue, timeout=1e4, timestep=1.):
     queues = [queue] if isinstance(queue, Queue) else queue
     t0 = time.time()
     stop = False
-    # print(managers)
+    qmanagers = [{} for i in range(len(queues))]
     while True:
+        time.sleep(timestep * random.uniform(0.8, 1.2))
         if (time.time() - t0) > timeout:
             break
         if all(queue.paused for queue in queues) or stop:
             break
         stop = True
-        for queue in queues:
+        for queue, managers in zip(queues, qmanagers):
             if queue.paused:
                 continue
+            if queue.counts(state=TaskState.PENDING) or (queue.counts(state=TaskState.WAITING) and queue.counts(state=TaskState.RUNNING)):
+                stop = False
             for manager in queue.managers():
-                ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING) + queue.counts(mid=manager.id, state=TaskState.WAITING)
+                if manager.id not in managers:
+                    managers[manager.id] = manager
+                manager = managers[manager.id]  # such that manager.provider keeps track of current processes
+                ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING)
                 # print(ntasks, queue.counts(mid=manager.id, state=TaskState.PENDING), queue.counts(mid=manager.id, state=TaskState.WAITING), stop, flush=True)
                 if ntasks:
-                    stop = False
                     # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
                     manager.spawn('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id), ntasks=ntasks)
-        time.sleep(timestep * random.uniform(0.8, 1.2))
 
 
 def get_queue(queue, create=None, spawn=False):

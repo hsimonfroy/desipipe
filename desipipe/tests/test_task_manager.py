@@ -38,9 +38,9 @@ def test_serialization():
 def test_queue(spawn=True, run=False):
 
     queue = Queue('test', base_dir=base_dir, spawn=spawn)
-    provider = None
-    if os.getenv('NERSC_HOST', None):
-        provider = dict(time='00:02:00', nodes_per_worker=0.1)
+    provider = dict(provider='local')
+    if False: # os.getenv('NERSC_HOST', None):
+        provider = dict(time='00:01:00', nodes_per_worker=0.1)
     tm = TaskManager(queue, environ=dict(), scheduler=dict(max_workers=2), provider=provider)
     tm2 = tm.clone(scheduler=dict(max_workers=1), provider=dict(provider='local'))
 
@@ -162,6 +162,6 @@ if __name__ == '__main__':
 
     #test_serialization()
     #test_app()
-    #test_queue(spawn=True)
+    test_queue(spawn=True)
     #test_cmdline()
-    test_file(spawn=True)
+    #test_file(spawn=True)

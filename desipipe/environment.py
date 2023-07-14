@@ -185,4 +185,4 @@ class CosmodesiNERSCEnvironment(BaseNERSCEnvironment):
     """cosmodesi environment at NERSC."""
 
     name = 'nersc-cosmodesi'
-    _command = 'source /global/cfs/cdirs/desi/users/adematti/cosmodesi_environment.sh main'
+    _command = 'source /global/common/software/desi/users/adematti/cosmodesi_environment.sh main'

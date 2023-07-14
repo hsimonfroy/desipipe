@@ -14,24 +14,30 @@ tm_sample = tm.clone(scheduler=dict(max_workers=10), provider=dict(provider='ner
 @tm_corr.python_app
 def compute_correlation(data, randoms, output):
     import numpy as np
+    
     from pycorr import TwoPointCorrelationFunction
     from cosmoprimo.fiducial import DESI
-    zrange = data.options['zrange']
+    
+    tracer = data.options['tracer']
     data = data.read()
     cosmo = DESI()
+    zrange = output.options['zrange']
     mask = (data['Z'] >= zrange[0]) & (data['Z'] < zrange[1])
     data_positions = [data['RA'][mask], data['DEC'][mask], cosmo.comoving_radial_distance(data['Z'][mask])]
     data_weights = (data['WEIGHT'] * data['WEIGHT_FKP'])[mask]
     edges = (np.linspace(0., 200, 201), np.linspace(-1., 1., 201))
     corr = 0
-    for iran in range(2):
+    D1D2 = None
+    for iran in range(4):
         randoms = randoms.get(iran=iran).read()
         mask = (randoms['Z'] >= zrange[0]) & (randoms['Z'] < zrange[1])
         randoms_positions = [randoms['RA'][mask], randoms['DEC'][mask], cosmo.comoving_radial_distance(randoms['Z'][mask])]
         randoms_weights = (randoms['WEIGHT'] * randoms['WEIGHT_FKP'])[mask]
-        corr += TwoPointCorrelationFunction(mode='smu', edges=edges, data_positions1=data_positions, randoms_positions1=randoms_positions,
-                                            data_weights1=data_weights, randoms_weights1=randoms_weights,
-                                            position_type='rdd', los='midpoint', nthreads=64)
+        tmp = TwoPointCorrelationFunction(mode='smu', edges=edges, data_positions1=data_positions, randoms_positions1=randoms_positions,
+                                          data_weights1=data_weights, randoms_weights1=randoms_weights,
+                                          position_type='rdd', los='midpoint', nthreads=64, D1D2=D1D2)
+        D1D2 = tmp.D1D2
+        corr += tmp
     corr.D1D2.attrs['z'] = (data['Z'][mask] * data_weights).cmean() / data_weights.cmean()
     corr.D1D2.attrs['tracer'] = tracer
     output.write(corr)
@@ -225,31 +231,7 @@ def sample(data, output, get_observable_likelihood=get_observable_likelihood, re
 
 
 def cut_matrix(cov, xcov, ellscov, xlim):
-    """
-    The function cuts a matrix based on specified indices and returns the resulting submatrix.
-
-    Parameters
-    ----------
-    cov : 2D array
-        A square matrix representing the covariance matrix.
-
-    xcov : 1D array
-        x-coordinates in the covariance matrix.
-
-    ellscov : list
-        Multipoles in the covariance matrix.
-
-    xlim : tuple
-        `xlim` is a dictionary where the keys are `ell` and the values are tuples of two floats
-        representing the lower and upper limits of `xcov` for that `ell` value to be returned.
-
-    Returns
-    -------
-    cov : array
-        Subset of the input matrix `cov`, based on `xlim`.
-        The subset is determined by selecting rows and columns of `cov` corresponding to the
-        values of `ell` and `xcov` that fall within the specified `xlim` range.
-    """
+    """The function cuts a matrix based on specified indices and returns the resulting submatrix."""
     import numpy as np
     assert len(cov) == len(xcov) * len(ellscov), 'Input matrix has size {}, different than {} x {}'.format(len(cov), len(xcov), len(ellscov))
     indices = []
@@ -266,8 +248,8 @@ if __name__ == '__main__':
     fm = FileManager('files/y1_data.yaml', environ=environ)
 
     for tracer in ['LRG']:
+        fmt = fm.select(tracer=tracer)
         for zrange in [(0.4, 1.1)]:
-            fmt = fm.select(tracer=tracer)
             data = []
             version = 'v0.4'
             for fi in fmt.select(filetype=['catalog', 'correlation'], version=version):  # iterate on NGC / SGC

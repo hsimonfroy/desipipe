@@ -72,7 +72,7 @@ class BaseFile(BaseClass):
     description : str, default=''
         Plain text describing the file(s).
     """
-    _defaults = dict(filetype='', path='', id='', author='', options=dict(), description='')
+    _defaults = dict(filetype='', path='', id='', author='', options=dict(), foptions=dict(), description='')
 
     def __init__(self, *args, **kwargs):
         """
@@ -136,6 +136,38 @@ def _make_list_options(values):
     return values
 
 
+def in_options(values, options, return_index=False):
+    """Return input values that are in options."""
+    if not options:
+        return []
+    
+    def get_ndim(opt):
+        if hasattr(opt, '__iter__') and not isinstance(opt, str):
+            for opt in opt:
+                return 1 + get_ndim(opt)
+        return 0
+    
+    ndim_options = get_ndim(options)
+    ndim_values = get_ndim(values)
+    ivalues = values
+    if ndim_values == ndim_options - 1:
+        values = [values]
+    elif ndim_values != ndim_options:
+        raise ValueError('Cannot match values {} with options {}'.format(values, options))
+    toret, index = [], []
+    options = list(options)
+    for value in values:
+        if type(value) is not type(options[0]):
+            value = type(options[0])(value)
+        if value in options:
+            ii = options.index(value)
+            toret.append(options[ii])
+            index.append(ii)
+    if return_index:
+        return toret, index
+    return toret
+
+
 class FileEntry(BaseFile):
 
     """Class describing a file entry."""
@@ -143,13 +175,20 @@ class FileEntry(BaseFile):
     def update(self, **kwargs):
         """Update input attributes (options values are turned into lists)."""
         super(FileEntry, self).update(**kwargs)
+        
         if 'options' in kwargs:
-            options = {}
-            for name, values in self.options.items():
+            options, foptions = {}, {}
+            for name, values in kwargs['options'].items():
+                if isinstance(values, dict):
+                    foptions[name] = list(values.keys())
+                    values = list(values.values())
                 if isinstance(values, str) and re.match(r'range\((.*)\)$', values):
                     values = eval(values)
-                options[name] = _make_list_options(values)
-            self.options = options
+                options[name] = values = _make_list_options(values)
+                foptions.setdefault(name, values)
+            self.options, self.foptions = options, foptions
+        if 'foptions' in kwargs:
+            self.foptions = dict(kwargs['foptions'])
 
     def select(self, **kwargs):
         """
@@ -165,18 +204,29 @@ class FileEntry(BaseFile):
                     return test == type(test)(ref)
             return test == ref
 
-        options = self.options.copy()
+        options, foptions = self.options.copy(), self.foptions.copy()
         for name, values in kwargs.items():
             if name in options:
-                ivalues = []
-                for value in _make_list_options(values):
-                    if any(eq(value, ref) for ref in options[name]):
-                        ivalues.append(value)
-                        # raise ValueError('{} is not in option {} ({})'.format(value, name, options[name]))
-                options[name] = ivalues
+                options[name], indices = in_options(values, options[name], return_index=True)
+                foptions[name] = [foptions[name][index] for index in indices]
             else:
                 raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
-        return self.clone(options=options)
+        return self.clone(options=options, foptions=foptions)
+    
+    def get(self, *args, **kwargs):
+        """
+        Return the :class:`File` instance that matches input arguments, see :meth:`select`.
+        If :meth:`select` returns several file entries, and / or file entries with multiples files,
+        a :class:`ValueError` is raised.
+        """
+        new = self.select(*args, **kwargs)
+        if len(new) == 1:
+            for fi in new:
+                return fi  # File instance
+        if len(new) == 0:
+            raise ValueError('"get" is not applicable as there are no matching entries')
+        else:
+            raise ValueError('"get" is not applicable as there are  with multiple options:\n{}'.format(new))
 
     def __len__(self):
         """Length, i.e. number of individual files (looping over all options) described by this file entry."""
@@ -187,11 +237,14 @@ class FileEntry(BaseFile):
 
     def __iter__(self):
         """Iterate over all files (looping over all options) described by this file entry."""
-        for values in itertools.product(*self.options.values()):
-            options = {name: values[iname] for iname, name in enumerate(self.options)}
+        for ivalues in itertools.product(*(range(len(values)) for values in self.options.values())):
+            options, foptions = {}, {}
+            for iname, name in enumerate(self.options):
+                ivalue = ivalues[iname]
+                options[name], foptions[name] = self.options[name][ivalue], self.foptions[name][ivalue]
             fi = File()
             fi.__dict__.update(self.__dict__)
-            fi.options = options
+            fi.options, fi.foptions = options, foptions
             yield fi
 
 
@@ -210,7 +263,7 @@ class File(BaseFile):
             placeholder_nobrackets = placeholder[2:-1]
             if placeholder_nobrackets in environ:
                 path = path.replace(placeholder, environ[placeholder_nobrackets])
-        return path.format(**self.options)
+        return path.format(**self.foptions)
 
     def read(self, *args, **kwargs):
         """Read file from disk."""
@@ -481,6 +534,7 @@ class FileEntryCollection(BaseClass):
         return new
 
     def update(self, **kwargs):
+        """Update :attr:`data` (list of :class:`FileEntry`) or :attr:`environ` (dict)."""
         if 'data' in kwargs:
             self.data = []
             for entry in kwargs.pop('data'): self.append(entry)
@@ -536,33 +590,42 @@ class FileManager(FileEntryCollection):
         self.__dict__.update(dbc.__dict__)
     
     def update(self, **kwargs):
+        """Update :attr:`data` (list of :class:`FileEntry`) or :attr:`environ` (dict)."""
         if 'environ' in kwargs:
             kwargs['environ'] = get_environ(kwargs['environ']).to_dict(all=True)
         super(FileManager, self).update(**kwargs)
+    
+    @property
+    def options(self):
+        """Return intersection of all options, i.e. options that are common to all file entries."""
+        if not self.data:
+            return {}
 
-    def __iter__(self):
-        """Loop over options that are common to all file entries, and yield the (selected) :class:`FileEntryCollection` instances."""
-        if not self:
-            return []
-
-        options = dict(self[0].options)
+        options = dict(self.data[0].options)
 
         def _intersect(options1, options2):
             options = {}
             for name, values1 in options1.items():
                 if name in options2:
-                    values2 = options2[name]
-                    values = [value for value in values1 if value in values2]
-                    options[name] = values
+                    options[name] = in_options(values1, options2[name])
             return options
 
         for entry in self.data:
             options = _intersect(options, entry.options)
+        return options
+
+    def __iter__(self):
+        """Loop over options that are common to all file entries (:attr:`options`), and yield the (selected) :class:`FileEntryCollection` instances."""
+        if not self.data:
+            return
+
+        options = self.options
+
         for values in itertools.product(*options.values()):
-            opt = {name: values[iname] for iname, name in enumerate(options)}
+            opt = {name: [values[iname]] for iname, name in enumerate(options)}
             database = self.clone(data=[])
             for entry in self.data:
-                entry = entry.clone(options={**entry.options, **opt})
+                entry = entry.select(**{**entry.options, **opt})
                 database.append(entry)
             yield database
             

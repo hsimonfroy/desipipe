@@ -175,7 +175,7 @@ class DictMetaClass(type(BaseClass), type(UserDict)):
     pass
 
 
-class BaseDict(BaseClass, UserDict, metaclass=DictMetaClass):
+class BaseDict(UserDict, BaseClass, metaclass=DictMetaClass):
 
     def clone(self, *args, **kwargs):
         new = self.copy()

@@ -4,7 +4,7 @@ from desipipe import FileManager
 def test_file_manager():
 
     fm = FileManager(database='test_file_manager.yaml', environ=dict(DESIPIPEENVDIR='.'))
-    fmp = fm.select(keywords='power')
+    fmp = fm.select(keywords='power', zrange=[1., 1.2])
     assert len(fmp) == 1
     assert len(fmp.filepaths) == 6
     for fn in fmp:

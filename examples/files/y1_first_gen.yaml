@@ -24,47 +24,74 @@ options:
   imock: range(0, 1000, 1)
   tracer: [LRG]
 ---
+description: Y1 First Generation Abacus box catalogs with baseline HOD
+author: sihany
+id: catalog_abacus_first_generation_box_2gpc_baseline
+filetype: catalog
+path: /global/cfs/cdirs/desi/cosmosim/FirstGenMocks/AbacusSummit/CubicBox/{tracer}/z{z:.3f}/AbacusSummit_base_c000_ph{imock:03d}/LRG_snap20_ph{imock:03d}.gcat.sub{isub:d}.fits
+options:
+  imock: range(0, 25, 1)
+  ihod: [0]
+  tracer: [LRG]
+  z: [0.8]
+  isub: range(64)
+---
 description: Y1 First Generation Abacus box catalogs with alternative HODs
 author: sihany
 id: catalog_abacus_first_generation_box_2gpc_hod
 filetype: catalog
-path: /pscratch/sd/s/sihany/desi_mocks_challenge/catalogs/CubicBox/{tracer}/z0.800/AbacusSummit_base_c000_ph{imock:03d}/catalog_rsd_xi2d_lrg_main_z0.8_velbias_B_s_test_hod{ihod:d}.fits
+path: /pscratch/sd/s/sihany/desi_mocks_challenge/catalogs/CubicBox/{tracer}/z{z:.3f}/AbacusSummit_base_c000_ph{imock:03d}/catalog_rsd_xi2d_lrg_main_z0.8_velbias_B_s_test_hod{ihod:d}.fits
 options:
   imock: range(0, 25, 1)
   ihod: range(1, 7)
   tracer: [LRG]
+  z: [0.8]
 ---
 description: Y1 First Generation Abacus box catalogs with alternative HODs
 author: sihany
 id: catalog_abacus_first_generation_box_2gpc_hod
 filetype: catalog
-path: /global/cfs/cdirs/desi/cosmosim/AbacusHOD_mocks/v1/CubicBox/LRG/z0.800/AbacusSummit_base_c000_ph{imock:03d}/catalog_rsd_xi2d_lrg_main_z0.8_velbias_mockcov.fits
+path: ${DESICFS}/cosmosim/AbacusHOD_mocks/v1/CubicBox/LRG/z{z:.3f}/AbacusSummit_base_c000_ph{imock:03d}/catalog_rsd_xi2d_lrg_main_z0.8_velbias_mockcov.fits
 options:
   imock: range(0, 25, 1)
   ihod: [7]
   tracer: [LRG]
+  z: [0.8]
 ---
 description: Y1 First Generation Abacus box catalogs with alternative HODs
 author: sihany
 id: catalog_abacus_first_generation_box_2gpc_hod
 filetype: catalog
-path: /global/cfs/cdirs/desi/cosmosim/AbacusHOD_mocks/v1/CubicBox/LRG/z0.800/AbacusSummit_base_c000_ph{imock:03d}/catalog_rsd_xi2d_lrg_main_z0.8_velbias_B_s_mockcov.fits
+path: ${DESICFS}/cosmosim/AbacusHOD_mocks/v1/CubicBox/LRG/z{z:.3f}/AbacusSummit_base_c000_ph{imock:03d}/catalog_rsd_xi2d_lrg_main_z0.8_velbias_B_s_mockcov.fits
 options:
   imock: range(0, 25, 1)
   ihod: [8]
   tracer: [LRG]
+  z: [0.8]
+---
+description: Y1 First Generation Abacus box power spectra with baseline HODs
+author: jmena
+id: power_abacus_first_generation_box_2gpc_baseline
+filetype: power
+path: ${DESICFS}/cosmosim/KP45/MC/Clustering/AbacusSummit/CubicBox/LRG/Pk/Pre/jmena/nmesh_512/pypower_format/Pk_AbacusSummit_base_c000_ph{imock:03d}.npy
+options:
+  ihod: [0]
+  imock: range(0, 25, 1)
+  tracer: [LRG]
+  z: [0.8]
 ---
 description: Y1 First Generation Abacus box power spectra with alternative HODs
 author: adematti
 id: power_abacus_first_generation_box_2gpc_hod
 filetype: power
-path: ${DESICFS}/users/adematti/desi_mock_challenge/FirstGenMocks/AbacusSummit/CubicBox/{tracer}/z0.800/HOD/power_AbacusSummit_base_c000_ph{imock:03d}_HOD{ihod:d}_nmesh{nmesh:d}_los{los}.npy
+path: ${DESICFS}/users/adematti/desi_mock_challenge/FirstGenMocks/AbacusSummit/CubicBox/{tracer}/z{z:.3f}/HOD/power_AbacusSummit_base_c000_ph{imock:03d}_HOD{ihod:d}_nmesh{nmesh:d}_los{los}.npy
 options:
   imock: range(0, 25, 1)
-  ihod: range(1, 9)
+  ihod: range(0, 9)
   tracer: [LRG]
   los: ['x', 'y', 'z']
   nmesh: [512]
+  z: [0.8]
 ---
 description: Y1 First Generation Abacus fiber assigned data and randoms cutsky power spectra
 id: power_abacus_first_generation_cutsky_y1
@@ -87,17 +114,21 @@ description: Full shape fits (profiles) to 2Gpc Abacus boxes with alternative HO
 author: adematti
 id: profiles_box_2gpc_hod
 filetype: generic
-path: ${DESICFS}/users/adematti/desi_mock_challenge/FirstGenMocks/AbacusSummit/CubicBox/{tracer}/z0.800/HOD/profiles_HOD{ihod:d}.npy
+path: ${DESICFS}/users/adematti/desi_mock_challenge/FirstGenMocks/AbacusSummit/CubicBox/{tracer}/z{z:.3f}/HOD/profiles_ell{ells}_HOD{ihod:d}.npy
 options:
-  ihod: range(1, 9)
+  ihod: range(0, 9)
   tracer: [LRG]
+  z: [0.8]
+  ells: {'02': [0, 2], '024': [0, 2, 4]}
 ---
 description: Full shape fits (chains) to 2Gpc Abacus boxes with alternative HODs
 author: adematti
 id: chains_box_2gpc_hod
 filetype: generic
-path: ${DESICFS}/users/adematti/desi_mock_challenge/FirstGenMocks/AbacusSummit/CubicBox/{tracer}/z0.800/HOD/chain_HOD{ihod:d}_{ichain:d}.npy
+path: ${DESICFS}/users/adematti/desi_mock_challenge/FirstGenMocks/AbacusSummit/CubicBox/{tracer}/z{z:.3f}/HOD/chain_ell{ells}_HOD{ihod:d}_{ichain:d}.npy
 options:
   ihod: range(1, 9)
   tracer: [LRG]
+  z: [0.8]
+  ells: {'02': [0, 2], '024': [0, 2, 4]}
   ichain: range(8)
