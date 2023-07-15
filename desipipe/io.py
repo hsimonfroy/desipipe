@@ -131,6 +131,26 @@ class CorrelationFunctionFile(BaseFile):
         return corr.save(self.path)
 
 
+class BaseMatrixFile(BaseFile):
+
+    """Power spectrum file."""
+    name = 'wmatrix'
+
+    def read(self, mode='poles'):
+        """Read power spectrum."""
+        from pypower import MeshFFTWindow, BaseMatrix
+        toret = MeshFFTWindow.load(self.path)
+        try:
+            toret = getattr(toret, mode)
+        except AttributeError:
+            toret =  BaseMatrix.load(self.path)
+        return toret
+
+    def write(self, power):
+        """Write power spectrum."""
+        return power.save(self.path)
+
+
 class GenericFile(BaseFile):
 
     """Generic file."""

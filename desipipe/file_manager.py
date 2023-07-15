@@ -117,8 +117,10 @@ class BaseFile(BaseClass):
 
     def __repr__(self):
         """String representation: class name and attributes."""
-        #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in self.to_dict().items()]))
-        return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in self.to_dict().items()]))
+        di = self.to_dict()
+        di.pop('foptions', None)
+        #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
+        return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
 
 
 def _make_list(values):
@@ -140,16 +142,17 @@ def in_options(values, options, return_index=False):
     """Return input values that are in options."""
     if not options:
         return []
-    
+    if values is Ellipsis:
+        values = options
+
     def get_ndim(opt):
         if hasattr(opt, '__iter__') and not isinstance(opt, str):
             for opt in opt:
                 return 1 + get_ndim(opt)
         return 0
-    
+
     ndim_options = get_ndim(options)
     ndim_values = get_ndim(values)
-    ivalues = values
     if ndim_values == ndim_options - 1:
         values = [values]
     elif ndim_values != ndim_options:
@@ -168,6 +171,11 @@ def in_options(values, options, return_index=False):
     return toret
 
 
+def iter_options(options):
+    for values in itertools.product(*options.values()):
+        yield {name: [values[iname]] for iname, name in enumerate(options)}
+
+
 class FileEntry(BaseFile):
 
     """Class describing a file entry."""
@@ -175,7 +183,7 @@ class FileEntry(BaseFile):
     def update(self, **kwargs):
         """Update input attributes (options values are turned into lists)."""
         super(FileEntry, self).update(**kwargs)
-        
+
         if 'options' in kwargs:
             options, foptions = {}, {}
             for name, values in kwargs['options'].items():
@@ -212,7 +220,7 @@ class FileEntry(BaseFile):
             else:
                 raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
         return self.clone(options=options, foptions=foptions)
-    
+
     def get(self, *args, **kwargs):
         """
         Return the :class:`File` instance that matches input arguments, see :meth:`select`.
@@ -294,6 +302,7 @@ class File(BaseFile):
         di = self.to_dict()
         di.pop('path')
         di['filepath'] = self.filepath
+        di.pop('foptions')
         #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
 
@@ -497,7 +506,7 @@ class FileEntryCollection(BaseClass):
     def __len__(self):
         """Length, i.e. number of file entries."""
         return len(self.data)
-            
+
     def insert(self, index, entry):
         """
         Insert a new file entry, at input index.
@@ -544,7 +553,7 @@ class FileEntryCollection(BaseClass):
                 entry.environ = environ
         if kwargs:
             raise ValueError('Unrecognized arguments {}'.format(kwargs))
-    
+
     def clone(self, *args, **kwargs):
         """Return an updated copy."""
         new = self.copy()
@@ -588,13 +597,13 @@ class FileManager(FileEntryCollection):
         for db in _make_list(database):
             dbc += FileEntryCollection(db)
         self.__dict__.update(dbc.__dict__)
-    
+
     def update(self, **kwargs):
         """Update :attr:`data` (list of :class:`FileEntry`) or :attr:`environ` (dict)."""
         if 'environ' in kwargs:
             kwargs['environ'] = get_environ(kwargs['environ']).to_dict(all=True)
         super(FileManager, self).update(**kwargs)
-    
+
     @property
     def options(self):
         """Return intersection of all options, i.e. options that are common to all file entries."""
@@ -618,17 +627,13 @@ class FileManager(FileEntryCollection):
         """Loop over options that are common to all file entries (:attr:`options`), and yield the (selected) :class:`FileEntryCollection` instances."""
         if not self.data:
             return
-
-        options = self.options
-
-        for values in itertools.product(*options.values()):
-            opt = {name: [values[iname]] for iname, name in enumerate(options)}
+        for options in iter_options(self.options):
             database = self.clone(data=[])
             for entry in self.data:
-                entry = entry.select(**{**entry.options, **opt})
+                entry = entry.select(**{**entry.options, **options})
                 database.append(entry)
             yield database
-            
+
     @classmethod
     def databases(cls, keywords=None):
         if keywords is not None:

@@ -822,6 +822,11 @@ class Queue(BaseClass):
         except OSError:
             pass
 
+    def clear(self):
+        """Clear queue: delete and recreate."""
+        self.delete()
+        self.__init__(self.filename)
+
     def tasks(self, tid=None, mid=None, state=None, name=None, index=None, one=None, property=None):
         """
         List tasks in queue.
@@ -1206,12 +1211,12 @@ class PythonApp(BaseApp):
         errno, result, err, out, versions = 0, None, '', '', {}
         if self.dirname not in sys.path:
             sys.path.insert(0, self.dirname)
-        
+
         def clear(*streams):
             for stream in streams:
                 stream.seek(0)
                 stream.truncate(0)
-        
+
         # we shall use previous streams, as they may have been imported already
         clear(_sout, _serr)
         with contextlib.redirect_stdout(_sout), contextlib.redirect_stderr(_serr):
@@ -1224,7 +1229,7 @@ class PythonApp(BaseApp):
             versions = self.versions()
             out, err = _sout.getvalue(), _serr.getvalue()
         clear(_sout, _serr)
-        
+
         return errno, result, err, out, versions
 
     def versions(self):
@@ -1414,7 +1419,7 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
         task.state = TaskState.KILLED
         queue.add(task, replace=True)
         exit()
-    
+
     signal.signal(signal.SIGINT, exit_killed)
     signal.signal(signal.SIGTERM, exit_killed)
 
