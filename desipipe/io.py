@@ -137,7 +137,7 @@ class BaseMatrixFile(BaseFile):
     name = 'wmatrix'
 
     def read(self, mode='poles'):
-        """Read power spectrum."""
+        """Read matrix."""
         from pypower import MeshFFTWindow, BaseMatrix
         toret = MeshFFTWindow.load(self.path)
         try:
@@ -146,9 +146,9 @@ class BaseMatrixFile(BaseFile):
             toret =  BaseMatrix.load(self.path)
         return toret
 
-    def write(self, power):
-        """Write power spectrum."""
-        return power.save(self.path)
+    def write(self, matrix):
+        """Write matrix."""
+        return matrix.save(self.path)
 
 
 class GenericFile(BaseFile):

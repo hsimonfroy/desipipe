@@ -255,6 +255,16 @@ class FileEntry(BaseFile):
             fi.options, fi.foptions = options, foptions
             yield fi
 
+    @property
+    def filepath(self):
+        return self.get().filepath
+
+    def read(self, *args, **kwargs):
+        return self.get().read(*args, **kwargs)
+
+    def write(self, *args, **kwargs):
+        return self.get().write(*args, **kwargs)
+
 
 class File(BaseFile):
 

@@ -181,7 +181,7 @@ class SlurmProvider(BaseProvider):
     """
     name = 'slurm'
     _defaults = dict(account='desi', constraint='cpu', qos='regular', time='01:00:00', nodes_per_worker=1., mpiprocs_per_worker=1,
-                     output='/dev/null', error='/dev/null', mpiexec='srun -N {nodes:d} -n {mpiprocs:d} --cpu-bind=cores {cmd}')
+                     output='/dev/null', error='/dev/null', mpiexec='srun -N {nodes:d} -n {mpiprocs:d} {cmd}')
 
     def __call__(self, cmd, workers=1):
         """Submit input command ``cmd`` on ``workers`` workers."""

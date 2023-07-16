@@ -444,7 +444,7 @@ def _make_getter(name):
         except AttributeError:
             while True:
                 if (time.time() - t0) < timeout:
-                    if self.queue.tasks(tid=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING):
+                    if self.queue.tasks(tid=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING, TaskState.RUNNING):
                         # print(self.queue.tasks(self.id)[0].err)
                         tmp = getattr(self.queue.tasks(tid=self.id), name)
                         setattr(self, '_' + name, tmp)
@@ -1224,7 +1224,7 @@ class PythonApp(BaseApp):
                 result = self.func(*args, **kwargs)
             except Exception as exc:
                 errno = getattr(exc, 'errno', 42)
-                traceback.print_exc(file=err)
+                traceback.print_exc(file=_serr)
                 # raise exc
             versions = self.versions()
             out, err = _sout.getvalue(), _serr.getvalue()
