@@ -47,16 +47,16 @@ def test_queue(spawn=True, run=False):
     def common1(size):
         import time
         import numpy as np
-        time.sleep(2)
+        time.sleep(3)
         x, y = np.random.uniform(-1, 1, size), np.random.uniform(-1, 1, size)
         return np.sum((x**2 + y**2) < 1.) * 1. / size
 
-    def common2(size, co=common1):
+    def common2(size=10000, co=common1):
         return co(size=size)
 
     @tm.python_app
-    def fraction(size=10000, co=common2):
-        return co(size=size)
+    def fraction(a, *args, co=common2, **kwargs):
+        return co(**kwargs)
 
     @tm2.bash_app
     def echo(fractions):
@@ -76,7 +76,8 @@ def test_queue(spawn=True, run=False):
         return None
 
     t0 = time.time()
-    fractions = [fraction(size=1000 + i) for i in range(5)]
+    fractions = [fraction(2, size=1000 + i) for i in range(5)]
+
     ech = echo(fractions)
     avg = average(fractions)
     avg2 = average2(fractions)
@@ -101,7 +102,7 @@ def test_queue(spawn=True, run=False):
         task = TaskUnpickler.loads(pkl)
         print(task.kwargs)
         task.run()
-        print(task.err)
+        print(task.err, task.out)
 
     if spawn:
         for tid in queue.tasks(name='fraction', property='tid'):
@@ -162,6 +163,6 @@ if __name__ == '__main__':
 
     #test_serialization()
     #test_app()
-    test_queue(spawn=True)
+    test_queue(spawn=False, run=True)
     #test_cmdline()
     #test_file(spawn=True)

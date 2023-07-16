@@ -41,6 +41,12 @@ task_states = ['WAITING',       # Waiting for requirements (other tasks) to fini
 TaskState = type('TaskState', (), {**dict(zip(task_states, task_states)), 'ALL': task_states})
 
 
+var_types = ['POSITIONAL_OR_KEYWORD', 'KEYWORD_ONLY', 'VAR_POSITIONAL', 'VAR_KEYWORD']
+
+
+VarType = type('VarType', (), {**dict(zip(var_types, var_types)), 'ALL': var_types})
+
+
 class SerializationError(Exception): pass
 
 
@@ -75,8 +81,12 @@ def serialize_function(func, remove_decorator=False):
         raise SerializationError('{} code does not start with def: {}'.format(func, code))
     _, code = code.split(':', maxsplit=1)
     sig = inspect.signature(func)
-    parameters, dlocals = [], {}
+    parameters, vartypes, dlocals = [], {}, {}
     for param in sig.parameters.values():
+        vartypes[param.name] = {param.POSITIONAL_OR_KEYWORD: VarType.POSITIONAL_OR_KEYWORD,
+                                param.KEYWORD_ONLY: VarType.KEYWORD_ONLY,
+                                param.VAR_POSITIONAL: VarType.VAR_POSITIONAL,
+                                param.VAR_KEYWORD: VarType.VAR_KEYWORD}[param.kind]
         default = param.default
         if default is not inspect._empty:
             try:
@@ -90,7 +100,7 @@ def serialize_function(func, remove_decorator=False):
     for param in dlocals:
         sig = sig.replace("'#{}#'".format(param), param)
     code = 'def {}{}:{}'.format(name, sig, code)
-    return name, code, dlocals
+    return name, code, vartypes, dlocals
 
 
 def deserialize_function(name, code, dlocals):
@@ -123,7 +133,7 @@ class TaskPickler(pickle.Pickler):
             return ('Future', obj.id)
 
         try:
-            name, code, dlocals = serialize_function(obj)
+            name, code, vartypes, dlocals = serialize_function(obj)
         except SerializationError:
             pass
         else:
@@ -1110,8 +1120,8 @@ class BaseApp(BaseClass):
         """Update app with input attributes."""
         if 'func' in kwargs:
             self.func = kwargs.pop('func')
-            self.name, self.code, dlocals = serialize_function(self.func, remove_decorator=True)
-            self.params = list(dlocals.keys())
+            self.name, self.code, self.vartypes, dlocals = serialize_function(self.func, remove_decorator=True)
+            self.dlocals = dict.fromkeys(list(dlocals.keys()))
             self.filename = None
             try:
                 self.filename = inspect.getfile(self.func)
@@ -1167,18 +1177,33 @@ class BaseApp(BaseClass):
 
     def __getstate__(self):
         """Return app state."""
-        state = {name: getattr(self, name) for name in ['name', 'code', 'params', 'filename', 'dirname', 'write_attrs', 'write_dir', 'task_manager']}
+        state = {name: getattr(self, name) for name in ['name', 'code', 'vartypes', 'dlocals', 'filename', 'dirname', 'write_attrs', 'write_dir', 'task_manager']}
         return state
 
     def __setstate__(self, state):
         """Set app state."""
         self.add = {'skip': False, 'name': None}
         self.__dict__.update(state)
-        self.func = deserialize_function(self.name, self.code, dict.fromkeys(self.params))
+        self.func = deserialize_function(self.name, self.code, self.dlocals)
 
-    def run(self, *args, **kwargs):
+    def run(self, **kwargs):
         """Run app with input ``args`` and ``kwargs``."""
         raise NotImplementedError
+
+    def _run(self, **kwargs):
+        args, kw = [], {}
+        for var, vtype in self.vartypes.items():
+            if var not in kwargs: continue
+            value = kwargs[var]
+            if vtype == VarType.POSITIONAL_OR_KEYWORD:
+                args.append(value)
+            elif vtype == VarType.KEYWORD_ONLY:
+                kw[var] = value
+            elif vtype == VarType.VAR_POSITIONAL:
+                args += list(value)
+            elif vtype == VarType.VAR_KEYWORD:
+                kw = {**value, **kw}
+        self.func(*args, **kw)
 
     def versions(self):
         """Return module versions (unknown by default)."""
@@ -1206,7 +1231,7 @@ class PythonApp(BaseApp):
             print('hello' * n)
 
     """
-    def run(self, *args, **kwargs):
+    def run(self, **kwargs):
         """Run app with input ``args`` and ``kwargs``."""
         errno, result, err, out, versions = 0, None, '', '', {}
         if self.dirname not in sys.path:
@@ -1221,7 +1246,7 @@ class PythonApp(BaseApp):
         clear(_sout, _serr)
         with contextlib.redirect_stdout(_sout), contextlib.redirect_stderr(_serr):
             try:
-                result = self.func(*args, **kwargs)
+                result = self._run(**kwargs)
             except Exception as exc:
                 errno = getattr(exc, 'errno', 42)
                 traceback.print_exc(file=_serr)
@@ -1254,10 +1279,10 @@ class BashApp(BaseApp):
             return "echo '{}'".format('hello' * n)
 
     """
-    def run(self, *args, **kwargs):
+    def run(self, **kwargs):
         """Run app with input ``args`` and ``kwargs``."""
         errno, result, out, err = 0, None, '', ''
-        cmd = self.func(*args, **kwargs)
+        cmd = self._run(**kwargs)
         proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True, shell=False)
         out, err = proc.communicate()
         return errno, result, err, out, {}
