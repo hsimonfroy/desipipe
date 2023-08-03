@@ -105,7 +105,7 @@ def serialize_function(func, remove_decorator=False):
 
 def deserialize_function(name, code, dlocals):
     scope = {}
-    exec(code, dlocals, scope)
+    exec(code, dict(dlocals), scope)  # exec fills dlocals, so let's make a copy
     scope[name].__desipipecode__ = code
     return scope[name]
 
@@ -1203,7 +1203,7 @@ class BaseApp(BaseClass):
                 args += list(value)
             elif vtype == VarType.VAR_KEYWORD:
                 kw = {**value, **kw}
-        self.func(*args, **kw)
+        return self.func(*args, **kw)
 
     def versions(self):
         """Return module versions (unknown by default)."""
@@ -1441,6 +1441,7 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
         The MPI communicator.
     """
     def exit_killed(*args):
+        MPI.COMM_WORLD = mpicomm_bak
         task.state = TaskState.KILLED
         queue.add(task, replace=True)
         exit()
@@ -1450,23 +1451,25 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
 
     if mpicomm is None:
         from mpi4py import MPI
-        mpicomm = MPI.COMM_WORLD
+        mpicomm_bak = mpicomm = MPI.COMM_WORLD
     if mpisplits is not None:
         for isplit in range(mpisplits):
             if (mpicomm.size * isplit // mpisplits) <= mpicomm.rank < (mpicomm.size * (isplit + 1) // mpisplits):
                 color = isplit
         mpicomm = mpicomm.Split(color, 0)
+
     MPI.COMM_WORLD = mpicomm  # a bit hacky
     while True:
         task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
         if mpicomm.rank == 0:
-            task = TaskPickler.dumps(queue.pop(mid=mid, tid=tid), reduce_app=None)
+            task = queue.pop(mid=mid, tid=tid)
+            task = TaskPickler.dumps(task, reduce_app=None)
         task = TaskUnpickler.loads(mpicomm.bcast(task, root=0))
         if task is None:
             break
         kwargs = {}
-        if 'mpicomm' in task.kwargs and task.kwargs['mpicomm'] is None:
+        if task.kwargs.get('mpicomm', False) is None:
             kwargs['mpicomm'] = mpicomm
         task.run(**kwargs)
         mpicomm.barrier()
