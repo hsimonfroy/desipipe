@@ -48,7 +48,7 @@ def yaml_parser(string):
 
 
 class BaseMutableClass(BaseClass):
-    """Base mutable class, merely used to factorize code of :class:`FileEntry` and :class:`BaseFile`."""
+    """Base mutable class, merely used to factorize code of :class:`BaseFileEntry` and :class:`BaseFile`."""
     _defaults = dict()
 
     def __init__(self, *args, **kwargs):
@@ -156,136 +156,6 @@ def iter_options(options):
         yield {name: Ellipsis if options[name] is Ellipsis else [values[iname]] for iname, name in enumerate(options)}
 
 
-class FileEntry(BaseMutableClass):
-    """
-    Class describing a file entry.
-
-    Attributes
-    ----------
-    filetype : str, default=''
-        File type, e.g. 'catalog', 'power', etc.
-
-    path : str, default=''
-        Path to file(s). May contain placeholders, e.g. 'data_{tracer}_{region}.fits',
-        with the list of values that ``tracer``, ``region`` may take specified in ``options`` (see below).
-
-    id : str, default=''
-        File (unique) identifier.
-
-    author : str, default=''
-        Who produced this file.
-
-    options : dict, default=dict()
-        Dictionary matching placeholders in ``path`` to the list of values they can take, e.g. {'region': ['NGC', 'SGC']}
-
-    description : str, default=''
-        Plain text describing the file(s).
-    """
-
-    _defaults = dict(filetype='', path='', id='', author='', options=dict(), foptions=dict(), description='')
-
-    def update(self, **kwargs):
-        """Update input attributes (options values are turned into lists)."""
-        super(FileEntry, self).update(**kwargs)
-        if 'options' in kwargs:
-            options, foptions = {}, {}
-            for name, values in kwargs['options'].items():
-                if values is None or values is Ellipsis:
-                    values = Ellipsis
-                elif isinstance(values, dict):
-                    foptions[name] = list(values.keys())
-                    values = list(values.values())
-                elif isinstance(values, str) and re.match(r'range\((.*)\)$', values):
-                    values = eval(values)
-                options[name] = values = _make_list_options(values)
-            self.options, self.foptions = options, foptions
-        if 'foptions' in kwargs:
-            self.foptions = dict(kwargs['foptions'])
-        for name, values in self.options.items():
-            self.foptions.setdefault(name, values)
-
-    def select(self, **kwargs):
-        """
-        Restrict to input options, e.g.
-
-        >>> entry.select(region=['NGC'])
-
-        returns a new entry, with option 'region' taking values in ``['NGC']``.
-        """
-        def eq(test, ref):
-            if type(test) is not type(ref):
-                if hasattr(test, '__iter__') and hasattr(ref, '__iter__'):
-                    return test == type(test)(ref)
-            return test == ref
-
-        options, foptions = self.options.copy(), self.foptions.copy()
-        for name, values in kwargs.items():
-            if name in options:
-                options[name], indices = in_options(values, options[name], return_index=True)
-                if indices is Ellipsis:  # Ellipsis
-                    foptions[name] = options[name]
-                else:
-                    foptions[name] = [foptions[name][index] for index in indices]
-            else:
-                raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
-        return self.clone(options=options, foptions=foptions)
-
-    def get(self, *args, **kwargs):
-        """
-        Return the :class:`File` instance that matches input arguments, see :meth:`select`.
-        If :meth:`select` returns several file entries, and / or file entries with multiples files,
-        a :class:`ValueError` is raised.
-        """
-        new = self.select(*args, **kwargs)
-        if len(new) == 1:
-            for fi in new:
-                return fi  # File instance
-        if len(new) == 0:
-            raise ValueError('"get" is not applicable as there are no matching entries')
-        else:
-            raise ValueError('"get" is not applicable as there are  with multiple options:\n{}'.format(new))
-
-    def __len__(self):
-        """Length, i.e. number of individual files (looping over all options) described by this file entry."""
-        size = 1
-        for values in self.options.values():
-            if values is Ellipsis: continue
-            size *= len(values)
-        return size
-
-    def __iter__(self):
-        """Iterate over all files (looping over all options) described by this file entry."""
-        for ivalues in itertools.product(*([Ellipsis] if values is Ellipsis else range(len(values)) for values in self.options.values())):
-            options, foptions = {}, {}
-            for iname, name in enumerate(self.options):
-                ivalue = ivalues[iname]
-                if self.options[name] is Ellipsis:
-                    options[name], foptions[name] = self.options[name], self.foptions[name]
-                else:
-                    options[name], foptions[name] = self.options[name][ivalue], self.foptions[name][ivalue]
-            fi = BaseFile()
-            fi.__dict__.update(self.__dict__)
-            fi.options, fi.foptions = options, foptions
-            yield fi
-
-    @property
-    def filepath(self):
-        return self.get().filepath
-
-    def read(self, *args, **kwargs):
-        return self.get().read(*args, **kwargs)
-
-    def write(self, *args, **kwargs):
-        return self.get().write(*args, **kwargs)
-
-    def __repr__(self):
-        """String representation: class name and attributes."""
-        di = self.to_dict()
-        di.pop('foptions', None)
-        #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
-        return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
-
-
 class BaseFile(BaseMutableClass):
     """
     Class describing a single file (single :attr:`options` values).
@@ -293,14 +163,14 @@ class BaseFile(BaseMutableClass):
     Attributes
     ----------
     filetype : str, default=''
-        File type, e.g. 'catalog', 'power', etc.
+        BaseFile type, e.g. 'catalog', 'power', etc.
 
     path : str, default=''
         Path to file(s). May contain placeholders, e.g. 'data_{tracer}_{region}.fits',
         with the list of values that ``tracer``, ``region`` may take specified in ``options`` (see below).
 
     id : str, default=''
-        File (unique) identifier.
+        BaseFile (unique) identifier.
 
     author : str, default=''
         Who produced this file.
@@ -358,6 +228,186 @@ class BaseFile(BaseMutableClass):
         di.pop('foptions')
         #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
+
+
+class RegisteredFileEntry(type(BaseMutableClass)):
+
+    """Metaclass registering :class:`BaseFileEntry`-derived classes."""
+
+    _registry = {}
+
+    def __new__(meta, name, bases, class_dict):
+        cls = super().__new__(meta, name, bases, class_dict)
+        meta._registry[cls.name] = cls
+        return cls
+
+
+class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
+    """
+    Class describing a file entry.
+    It can be subclassed to implement a special behaviour, e.g. a complex relation between options and the file path.
+    For this, you may only need to update :meth:`_get_file`, which returns a :class:`BaseFile` instance given the input options.
+
+    Attributes
+    ----------
+    filetype : str, default=''
+        BaseFile type, e.g. 'catalog', 'power', etc.
+
+    path : str, default=''
+        Path to file(s). May contain placeholders, e.g. 'data_{tracer}_{region}.fits',
+        with the list of values that ``tracer``, ``region`` may take specified in ``options`` (see below).
+
+    id : str, default=''
+        BaseFile (unique) identifier.
+
+    author : str, default=''
+        Who produced this file.
+
+    options : dict, default=dict()
+        Dictionary matching placeholders in ``path`` to the list of values they can take, e.g. {'region': ['NGC', 'SGC']}
+
+    description : str, default=''
+        Plain text describing the file(s).
+    """
+    name = 'base'
+    _defaults = dict(filetype='', path='', id='', author='', options=dict(), foptions=dict(), description='')
+    _file_cls = BaseFile
+
+    def update(self, **kwargs):
+        """Update input attributes (options values are turned into lists)."""
+        super(BaseFileEntry, self).update(**kwargs)
+        if 'options' in kwargs:
+            options, foptions = {}, {}
+            for name, values in kwargs['options'].items():
+                if values is None or values is Ellipsis:
+                    values = Ellipsis
+                elif isinstance(values, dict):
+                    foptions[name] = list(values.keys())
+                    values = list(values.values())
+                elif isinstance(values, str) and re.match(r'range\((.*)\)$', values):
+                    values = eval(values)
+                options[name] = values = _make_list_options(values)
+            self.options, self.foptions = options, foptions
+        if 'foptions' in kwargs:
+            self.foptions = dict(kwargs['foptions'])
+        for name, values in self.options.items():
+            self.foptions.setdefault(name, values)
+
+    def select(self, **kwargs):
+        """
+        Restrict to input options, e.g.
+
+        >>> entry.select(region=['NGC'])
+
+        returns a new entry, with option 'region' taking values in ``['NGC']``.
+        """
+        def eq(test, ref):
+            if type(test) is not type(ref):
+                if hasattr(test, '__iter__') and hasattr(ref, '__iter__'):
+                    return test == type(test)(ref)
+            return test == ref
+
+        options, foptions = self.options.copy(), self.foptions.copy()
+        for name, values in kwargs.items():
+            if name in options:
+                options[name], indices = in_options(values, options[name], return_index=True)
+                if indices is Ellipsis:  # Ellipsis
+                    foptions[name] = options[name]
+                else:
+                    foptions[name] = [foptions[name][index] for index in indices]
+            else:
+                raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
+        return self.clone(options=options, foptions=foptions)
+
+    def get(self, *args, **kwargs):
+        """
+        Return the :class:`BaseFile` instance that matches input arguments, see :meth:`select`.
+        If :meth:`select` returns several file entries, and / or file entries with multiples files,
+        a :class:`ValueError` is raised.
+        """
+        new = self.select(*args, **kwargs)
+        if len(new) == 1:
+            for fi in new:
+                return fi  # BaseFile instance
+        if len(new) == 0:
+            raise ValueError('"get" is not applicable as there are no matching entries')
+        else:
+            raise ValueError('"get" is not applicable as there are  with multiple options:\n{}'.format(new))
+
+    def __len__(self):
+        """Length, i.e. number of individual files (looping over all options) described by this file entry."""
+        size = 1
+        for values in self.options.values():
+            if values is Ellipsis: continue
+            size *= len(values)
+        return size
+
+    def _get_file(self, options, foptions=None):
+        """Return :class:`BaseFile` given input options."""
+        if foptions is None:
+            foptions = dict(options)
+        fi = self._file_cls()
+        fi.__dict__.update(self.__dict__)
+        fi.options, fi.foptions = options, foptions
+        return fi
+
+    def __iter__(self):
+        """Iterate over all files (looping over all options) described by this file entry."""
+        for ivalues in itertools.product(*([Ellipsis] if values is Ellipsis else range(len(values)) for values in self.options.values())):
+            options, foptions = {}, {}
+            for iname, name in enumerate(self.options):
+                ivalue = ivalues[iname]
+                if self.options[name] is Ellipsis:
+                    options[name], foptions[name] = self.options[name], self.foptions[name]
+                else:
+                    options[name], foptions[name] = self.options[name][ivalue], self.foptions[name][ivalue]
+            yield self._get_file(options, foptions=foptions)
+
+    @property
+    def filepath(self):
+        return self.get().filepath
+
+    def read(self, *args, **kwargs):
+        return self.get().read(*args, **kwargs)
+
+    def write(self, *args, **kwargs):
+        return self.get().write(*args, **kwargs)
+
+    def __repr__(self):
+        """String representation: class name and attributes."""
+        di = self.to_dict()
+        di.pop('foptions', None)
+        #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
+        return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
+
+
+def get_file_entry(file_entry=None, **kwargs):
+    """
+    Convenient function that returns the file entry.
+
+    Parameters
+    ----------
+    file_entry : BaseFileEntry, str, dict, default=None
+        A :class:`BaseFileEntry` instance, which is then returned directly,
+        a string specifying the name of the file entry (e.g. 'base')
+        or a dictionary of file entry attributes.
+        If not specified, the default file entry in desipipe's configuration
+        (see :class:`Config`) is used if provided, else 'base'.
+
+    **kwargs : dict
+        Optionally, additional provider attributes.
+
+    Returns
+    -------
+    provider : BaseProvider
+    """
+    if isinstance(file_entry, BaseFileEntry):
+        return file_entry
+    if isinstance(file_entry, dict):
+        file_entry, kwargs = file_entry.pop('fileentry', None), {**file_entry, **kwargs}
+    if file_entry is None:
+        file_entry = 'base'
+    return BaseFileEntry._registry[file_entry](**kwargs)
 
 
 def prod(iterator):
@@ -446,7 +496,7 @@ class FileEntryCollection(BaseClass):
             e.g. ``['power cutsky', 'fiber']`` selects the data base entries whose description contains 'power' and 'cutsky' or 'fiber'.
 
         **kwargs : dict
-            Restrict to these options, see :meth:`FileEntry.select`.
+            Restrict to these options, see :meth:`BaseFileEntry.select`.
 
         Returns
         -------
@@ -508,7 +558,7 @@ class FileEntryCollection(BaseClass):
             e.g. ``['power cutsky', 'fiber']`` selects the data base entries whose description contains 'power' and 'cutsky' or 'fiber'.
 
         **kwargs : dict
-            Restrict to these options, see :meth:`FileEntry.select`.
+            Restrict to these options, see :meth:`BaseFileEntry.select`.
 
         Returns
         -------
@@ -522,14 +572,14 @@ class FileEntryCollection(BaseClass):
 
     def get(self, *args, **kwargs):
         """
-        Return the :class:`File` instance that matches input arguments, see :meth:`select`.
+        Return the :class:`BaseFile` instance that matches input arguments, see :meth:`select`.
         If :meth:`select` returns several file entries, and / or file entries with multiples files,
         a :class:`ValueError` is raised.
         """
         new = self.select(*args, **kwargs)
         if len(new) == 1 and len(new[0]) == 1:
             for fi in new[0]:
-                return fi  # File instance
+                return fi  # BaseFile instance
         if prod(len(entry) for entry in new.data) == 0:
             raise ValueError('"get" is not applicable as there are no matching entries')
         else:
@@ -560,21 +610,23 @@ class FileEntryCollection(BaseClass):
         """Length, i.e. number of file entries."""
         return len(self.data)
 
+    def _get_file_entry(self, entry):
+        """Turn ``entry`` may be e.g. a dictionary, or a :class:`BaseFileEntry` instance, in a :class:`BaseFileEntry` instance."""
+        entry = get_file_entry(entry)
+        entry.environ = self.environ
+        return entry
+
     def insert(self, index, entry):
         """
         Insert a new file entry, at input index.
-        ``entry`` may be e.g. a dictionary, or a :class:`FileEntry` instance,
+        ``entry`` may be e.g. a dictionary, or a :class:`BaseFileEntry` instance,
         in which case a shallow copy is made.
         """
-        entry = FileEntry(entry)
-        entry.environ = self.environ
-        self.data.insert(index, entry)
+        self.data.insert(index, self._get_file_entry(entry))
 
     def append(self, entry):
-        """Append an input file entry, which may be e.g. a dictionary, or a :class:`FileEntry` instance."""
-        entry = FileEntry(entry)
-        entry.environ = self.environ
-        self.data.append(entry)
+        """Append an input file entry, which may be e.g. a dictionary, or a :class:`BaseFileEntry` instance."""
+        self.data.append(self._get_file_entry(entry))
 
     def write(self, fn):
         """Write data base to *yaml* file ``fn``."""
@@ -587,7 +639,13 @@ class FileEntryCollection(BaseClass):
 
             yaml.add_representer(list, list_rep)
 
-            yaml.dump_all([utils.dict_to_yaml(entry.to_dict()) for entry in self.data], file, default_flow_style=False)
+            dis = []
+            for entry in self.data:
+                di = entry.to_dict()
+                if entry.name != 'base':
+                    di['fileentry'] = entry.name
+                dis.append(utils.dict_to_yaml(di))
+            yaml.dump_all(dis, file, default_flow_style=False)
 
     def __copy__(self):
         """Return a shallow copy (data list is copied)."""
@@ -596,7 +654,7 @@ class FileEntryCollection(BaseClass):
         return new
 
     def update(self, **kwargs):
-        """Update :attr:`data` (list of :class:`FileEntry`) or :attr:`environ` (dict)."""
+        """Update :attr:`data` (list of :class:`BaseFileEntry`) or :attr:`environ` (dict)."""
         if 'data' in kwargs:
             self.data = []
             for entry in kwargs.pop('data'): self.append(entry)
@@ -642,7 +700,7 @@ class FileEntryCollection(BaseClass):
 
 class FileManager(FileEntryCollection):
 
-    """File manager, main class to be used to get paths to / read / write files."""
+    """BaseFile manager, main class to be used to get paths to / read / write files."""
 
     def __init__(self, database=(), environ=None):
         environ = get_environ(environ).to_dict(all=True)
@@ -652,7 +710,7 @@ class FileManager(FileEntryCollection):
         self.__dict__.update(dbc.__dict__)
 
     def update(self, **kwargs):
-        """Update :attr:`data` (list of :class:`FileEntry`) or :attr:`environ` (dict)."""
+        """Update :attr:`data` (list of :class:`BaseFileEntry`) or :attr:`environ` (dict)."""
         if 'environ' in kwargs:
             kwargs['environ'] = get_environ(kwargs['environ']).to_dict(all=True)
         super(FileManager, self).update(**kwargs)
