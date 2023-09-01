@@ -282,8 +282,8 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                 if values is None or values is Ellipsis:
                     values = Ellipsis
                 elif isinstance(values, dict):
-                    foptions[name] = list(values.keys())
-                    values = list(values.values())
+                    foptions[name] = list(values.values())
+                    values = list(values.keys())
                 elif isinstance(values, str) and re.match(r'range\((.*)\)$', values):
                     values = eval(values)
                 options[name] = values = _make_list_options(values)

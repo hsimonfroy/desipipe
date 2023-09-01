@@ -13,6 +13,6 @@ filetype: power
 path: ${DESIPIPEENVDIR}/_pk/power_{option}_{tracer}_{zrange[0]:.2f}_{zrange[1]:.2f}_{imock:d}.fits
 options:
   option:
-  tracer: {'LRG': 'LRG', 'ELG': 'ELG'}
+  tracer: {'LRG': 'LRG', 'ELG': 'ELG_LOP'}
   imock: range(0, 3, 1)
   zrange: [[1., 1.2], [1.2, 1.4]]

@@ -21,6 +21,8 @@ def test_file_manager():
     assert len(fmp.filepaths) == 6
     for fn in fmp:
         print(fn, fn.get(option='my_option').filepath)
+    for fn in fm.select(filetype='catalog'):
+        print(fn.get().filepath)
     fmp.append(dict(description='added file', id='added_file', filetype='catalog', path='test.fits'))
     fmp.append(MyFileEntry(dict(description='added file', id='added_file_2', filetype='catalog', path='test_{option}.fits', options={'option': ['my_option']})))
     fmp.append(dict(fileentry='my_file_entry', description='added file', id='added_file_3', filetype='catalog', path='test_{option}.fits', options={'option': ['my_option_2']}))
