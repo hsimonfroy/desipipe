@@ -47,41 +47,18 @@ def yaml_parser(string):
     return list(yaml.load_all(string, Loader=YamlLoader))
 
 
-class BaseFile(BaseClass):
-    """
-    Base class describing file(s), merely used to factorize code of :class:`FileEntry` and :class:`File`.
-
-    Attributes
-    ----------
-    filetype : str, default=''
-        File type, e.g. 'catalog', 'power', etc.
-
-    path : str, default=''
-        Path to file(s). May contain placeholders, e.g. 'data_{tracer}_{region}.fits',
-        with the list of values that ``tracer``, ``region`` may take specified in ``options`` (see below).
-
-    id : str, default=''
-        File (unique) identifier.
-
-    author : str, default=''
-        Who produced this file.
-
-    options : dict, default=dict()
-        Dictionary matching placeholders in ``path`` to the list of values they can take, e.g. {'region': ['NGC', 'SGC']}
-
-    description : str, default=''
-        Plain text describing the file(s).
-    """
-    _defaults = dict(filetype='', path='', id='', author='', options=dict(), foptions=dict(), description='')
+class BaseMutableClass(BaseClass):
+    """Base mutable class, merely used to factorize code of :class:`FileEntry` and :class:`BaseFile`."""
+    _defaults = dict()
 
     def __init__(self, *args, **kwargs):
         """
-        Initialize :class:`BaseFile`.
+        Initialize :class:`BaseMutableClass`.
 
         Parameters
         ----------
-        *args : dict, :class:`BaseFile`
-            Dictionary of (some) attributes (see above) or :class:`BaseFile` instance.
+        *args : dict, :class:`BaseMutableClass`
+            Dictionary of (some) attributes (see above) or :class:`BaseMutableClass` instance.
 
         **kwargs : dict
             Optionally, more attributes.
@@ -115,13 +92,6 @@ class BaseFile(BaseClass):
         """View as a dictionary (of attributes)."""
         return {name: getattr(self, name) for name in self._defaults}
 
-    def __repr__(self):
-        """String representation: class name and attributes."""
-        di = self.to_dict()
-        di.pop('foptions', None)
-        #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
-        return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
-
 
 def _make_list(values):
     """Turn input ``values`` (single value, list, iterator, etc.) into a list."""
@@ -133,6 +103,8 @@ def _make_list(values):
 
 
 def _make_list_options(values):
+    if values is Ellipsis:
+        return values
     if not isinstance(values, (list, range)):
         return [values]
     return values
@@ -144,6 +116,13 @@ def in_options(values, options, return_index=False):
         return []
     if values is Ellipsis:
         values = options
+    if options is Ellipsis:
+        toret = values
+        if get_ndim(toret) == 0:
+            toret = [toret]
+        if return_index:
+            return toret, Ellipsis
+        return toret
 
     def get_ndim(opt):
         if hasattr(opt, '__iter__') and not isinstance(opt, str):
@@ -176,9 +155,33 @@ def iter_options(options):
         yield {name: [values[iname]] for iname, name in enumerate(options)}
 
 
-class FileEntry(BaseFile):
+class FileEntry(BaseMutableClass):
+    """
+    Class describing a file entry.
 
-    """Class describing a file entry."""
+    Attributes
+    ----------
+    filetype : str, default=''
+        File type, e.g. 'catalog', 'power', etc.
+
+    path : str, default=''
+        Path to file(s). May contain placeholders, e.g. 'data_{tracer}_{region}.fits',
+        with the list of values that ``tracer``, ``region`` may take specified in ``options`` (see below).
+
+    id : str, default=''
+        File (unique) identifier.
+
+    author : str, default=''
+        Who produced this file.
+
+    options : dict, default=dict()
+        Dictionary matching placeholders in ``path`` to the list of values they can take, e.g. {'region': ['NGC', 'SGC']}
+
+    description : str, default=''
+        Plain text describing the file(s).
+    """
+
+    _defaults = dict(filetype='', path='', id='', author='', options=dict(), foptions=dict(), description='')
 
     def update(self, **kwargs):
         """Update input attributes (options values are turned into lists)."""
@@ -187,16 +190,19 @@ class FileEntry(BaseFile):
         if 'options' in kwargs:
             options, foptions = {}, {}
             for name, values in kwargs['options'].items():
-                if isinstance(values, dict):
+                if values is None or values is Ellipsis:
+                    options[name] = Ellipsis
+                elif isinstance(values, dict):
                     foptions[name] = list(values.keys())
                     values = list(values.values())
-                if isinstance(values, str) and re.match(r'range\((.*)\)$', values):
+                elif isinstance(values, str) and re.match(r'range\((.*)\)$', values):
                     values = eval(values)
                 options[name] = values = _make_list_options(values)
-                foptions.setdefault(name, values)
             self.options, self.foptions = options, foptions
         if 'foptions' in kwargs:
             self.foptions = dict(kwargs['foptions'])
+        for name, values in self.options.items():
+            self.foptions.setdefault(name, values)
 
     def select(self, **kwargs):
         """
@@ -216,7 +222,10 @@ class FileEntry(BaseFile):
         for name, values in kwargs.items():
             if name in options:
                 options[name], indices = in_options(values, options[name], return_index=True)
-                foptions[name] = [foptions[name][index] for index in indices]
+                if indices is Ellipsis:  # Ellipsis
+                    foptions[name] = options[name]
+                else:
+                    foptions[name] = [foptions[name][index] for index in indices]
             else:
                 raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
         return self.clone(options=options, foptions=foptions)
@@ -250,7 +259,7 @@ class FileEntry(BaseFile):
             for iname, name in enumerate(self.options):
                 ivalue = ivalues[iname]
                 options[name], foptions[name] = self.options[name][ivalue], self.foptions[name][ivalue]
-            fi = File()
+            fi = BaseFile()
             fi.__dict__.update(self.__dict__)
             fi.options, fi.foptions = options, foptions
             yield fi
@@ -265,10 +274,40 @@ class FileEntry(BaseFile):
     def write(self, *args, **kwargs):
         return self.get().write(*args, **kwargs)
 
+    def __repr__(self):
+        """String representation: class name and attributes."""
+        di = self.to_dict()
+        di.pop('foptions', None)
+        #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
+        return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
 
-class File(BaseFile):
 
-    """Class describing a single file (single option values)."""
+class BaseFile(BaseMutableClass):
+    """
+    Class describing a single file (single :attr:`options` values).
+
+    Attributes
+    ----------
+    filetype : str, default=''
+        File type, e.g. 'catalog', 'power', etc.
+
+    path : str, default=''
+        Path to file(s). May contain placeholders, e.g. 'data_{tracer}_{region}.fits',
+        with the list of values that ``tracer``, ``region`` may take specified in ``options`` (see below).
+
+    id : str, default=''
+        File (unique) identifier.
+
+    author : str, default=''
+        Who produced this file.
+
+    options : dict, default=dict()
+        Dictionary matching placeholders in ``path`` to the list of values they can take, e.g. {'region': ['NGC', 'SGC']}
+
+    description : str, default=''
+        Plain text describing the file(s).
+    """
+    _defaults = dict(filetype='', path='', id='', author='', options=dict(), foptions=dict(), description='')
 
     @property
     def filepath(self):
