@@ -16,7 +16,7 @@ def test_app():
         return a * b
 
     app = PythonApp(func)
-    print(app.run((1, 1), {}))
+    print(app.run(a=1, b=1))
 
 
 def test_serialization():
@@ -26,11 +26,11 @@ def test_serialization():
     def func(a, b, *args, c=4, **kwargs):
         return a * b * c
 
-    name, code, dlocals = serialize_function(func)
+    name, code, vartypes, dlocals = serialize_function(func)
     func2 = deserialize_function(name, code, dlocals)
     assert func2(1, 2, c=5) == 10.
-    name, code, dlocals = serialize_function(func2)
-    print(name, code, dlocals)
+    name, code, vartypes, dlocals = serialize_function(func2)
+    print(name, code, vartypes, dlocals)
     func2 = deserialize_function(name, code, dlocals)
     assert func2(1, 2) == 8.
 
@@ -114,6 +114,7 @@ def test_cmdline():
     import subprocess
     queue = "'./_tests/*'"
     queue_single = "./_tests/test.sqlite"
+    test_queue(spawn=False, run=False)
     subprocess.call(['desipipe', 'queues', '-q', queue])
     subprocess.call(['desipipe', 'tasks', '-q', queue_single, '--state', 'SUCCEEDED'])
     subprocess.call(['desipipe', 'delete', '-q', queue])
@@ -143,7 +144,7 @@ def test_file(spawn=True):
     def copy(text_in, text_out):
         text = text_in.read()
         text += ' this is my first message'
-        print('saving', text_out.rpath)
+        print('saving', text_out.filepath)
         text_out.write(text)
 
     results = []
@@ -160,8 +161,8 @@ def test_file(spawn=True):
 
 if __name__ == '__main__':
 
-    #test_serialization()
-    #test_app()
-    test_queue(spawn=False, run=False)
-    #test_cmdline()
-    #test_file(spawn=True)
+    test_serialization()
+    test_app()
+    test_queue(spawn=True, run=False)
+    test_cmdline()
+    test_file(spawn=True)
