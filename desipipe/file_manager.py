@@ -114,21 +114,22 @@ def in_options(values, options, return_index=False):
     """Return input values that are in options."""
     if not options:
         return []
-    if values is Ellipsis:
-        values = options
-    if options is Ellipsis:
-        toret = values
-        if get_ndim(toret) == 0:
-            toret = [toret]
-        if return_index:
-            return toret, Ellipsis
-        return toret
 
     def get_ndim(opt):
         if hasattr(opt, '__iter__') and not isinstance(opt, str):
             for opt in opt:
                 return 1 + get_ndim(opt)
         return 0
+
+    if values is Ellipsis:
+        values = options
+    if options is Ellipsis:
+        toret = values
+        if toret is not Ellipsis and get_ndim(toret) == 0:
+            toret = [toret]
+        if return_index:
+            return toret, Ellipsis
+        return toret
 
     ndim_options = get_ndim(options)
     ndim_values = get_ndim(values)
@@ -151,8 +152,8 @@ def in_options(values, options, return_index=False):
 
 
 def iter_options(options):
-    for values in itertools.product(*options.values()):
-        yield {name: [values[iname]] for iname, name in enumerate(options)}
+    for values in itertools.product(*[[Ellipsis] if values is Ellipsis else values for values in options.values()]):
+        yield {name: Ellipsis if options[name] is Ellipsis else [values[iname]] for iname, name in enumerate(options)}
 
 
 class FileEntry(BaseMutableClass):
@@ -186,12 +187,11 @@ class FileEntry(BaseMutableClass):
     def update(self, **kwargs):
         """Update input attributes (options values are turned into lists)."""
         super(FileEntry, self).update(**kwargs)
-
         if 'options' in kwargs:
             options, foptions = {}, {}
             for name, values in kwargs['options'].items():
                 if values is None or values is Ellipsis:
-                    options[name] = Ellipsis
+                    values = Ellipsis
                 elif isinstance(values, dict):
                     foptions[name] = list(values.keys())
                     values = list(values.values())
@@ -249,16 +249,20 @@ class FileEntry(BaseMutableClass):
         """Length, i.e. number of individual files (looping over all options) described by this file entry."""
         size = 1
         for values in self.options.values():
+            if values is Ellipsis: continue
             size *= len(values)
         return size
 
     def __iter__(self):
         """Iterate over all files (looping over all options) described by this file entry."""
-        for ivalues in itertools.product(*(range(len(values)) for values in self.options.values())):
+        for ivalues in itertools.product(*([Ellipsis] if values is Ellipsis else range(len(values)) for values in self.options.values())):
             options, foptions = {}, {}
             for iname, name in enumerate(self.options):
                 ivalue = ivalues[iname]
-                options[name], foptions[name] = self.options[name][ivalue], self.foptions[name][ivalue]
+                if self.options[name] is Ellipsis:
+                    options[name], foptions[name] = self.options[name], self.foptions[name]
+                else:
+                    options[name], foptions[name] = self.options[name][ivalue], self.foptions[name][ivalue]
             fi = BaseFile()
             fi.__dict__.update(self.__dict__)
             fi.options, fi.foptions = options, foptions
