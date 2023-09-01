@@ -43,6 +43,15 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
         self.update(**{'environ': environ, **kwargs})
         self.processes = []
 
+    @classmethod
+    def jobid(cls):
+        """Return job ID."""
+        return 0
+
+    @classmethod
+    def kill(cls, *jobids):
+        """Kill input job IDs."""
+
     def update(self, **kwargs):
         """Update provider with input attributes."""
         for name, value in kwargs.items():
@@ -119,6 +128,18 @@ class LocalProvider(BaseProvider):
     name = 'local'
     _defaults = dict(mpiprocs_per_worker=1, mpiexec='mpiexec -np {mpiprocs:d} {cmd}')
 
+    @classmethod
+    def jobid(cls):
+        """Return job ID."""
+        return os.getpid()
+
+    @classmethod
+    def kill(cls, *jobids):
+        """Kill input job IDs."""
+        import signal
+        for jobid in jobids:
+            os.kill(int(jobid), signal.SIGTERM)
+
     def __call__(self, cmd, workers=1):
         """Submit input command ``cmd`` on ``workers`` workers."""
         environ = {**os.environ, **self.environ.to_dict(all=True)}
@@ -182,6 +203,17 @@ class SlurmProvider(BaseProvider):
     name = 'slurm'
     _defaults = dict(account='desi', constraint='cpu', qos='regular', time='01:00:00', nodes_per_worker=1., mpiprocs_per_worker=1,
                      output='/dev/null', error='/dev/null', mpiexec='srun -N {nodes:d} -n {mpiprocs:d} {cmd}')
+
+    @classmethod
+    def jobid(cls):
+        """Return job ID."""
+        return os.environ.get('SLURM_JOB_ID', '')
+
+    @classmethod
+    def kill(cls, *jobids):
+        """Kill input job IDs."""
+        for jobid in jobids:
+            subprocess.run(['scancel', '-u', str(jobid)])
 
     def __call__(self, cmd, workers=1):
         """Submit input command ``cmd`` on ``workers`` workers."""

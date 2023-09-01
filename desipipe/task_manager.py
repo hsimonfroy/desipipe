@@ -543,12 +543,13 @@ class Queue(BaseClass):
                 tid      TEXT PRIMARY KEY,
                 task     TEXT,
                 state    TEXT,
-                mid      TEXT  -- task manager id
+                mid      TEXT,  -- task manager id
+                jobid    TEXT
             );
             -- Dependencies table.  Multiple entries for multiple deps.
             CREATE TABLE requires (
                 tid      TEXT,     -- task.id foreign key
-                require TEXT,     -- task.id that it depends upon
+                require TEXT,      -- task.id that it depends upon
             -- Add foreign key constraints
                 FOREIGN KEY(tid) REFERENCES tasks(tid),
                 FOREIGN KEY(require) REFERENCES tasks(tid)
@@ -780,6 +781,17 @@ class Queue(BaseClass):
         finally:
             self._release_lock()
 
+    def set_task_jobid(self, tid, jobid):
+        """Set the jobid of task with input ID ``tid`` to ``jobid``."""
+        try:
+            self._get_lock()
+            query = 'UPDATE tasks SET jobid=? WHERE tid=?'
+            self._query([query, (jobid, tid)])
+            self.db.commit()
+
+        finally:
+            self._release_lock()
+
     def _update_waiting_task_state(self, tid, force=False):
         """
         Check if all requirements of task of ID ``tid`` have finished running.
@@ -837,25 +849,28 @@ class Queue(BaseClass):
         self.delete()
         self.__init__(self.filename)
 
-    def tasks(self, tid=None, mid=None, state=None, name=None, index=None, one=None, property=None):
+    def tasks(self, tid=None, state=None, mid=None, jobid=None, name=None, index=None, one=None, property=None):
         """
         List tasks in queue.
 
         Parameters
         ----------
-        tid : str, default=None
+        tid : str, list, default=None
             If not ``None``, select task with given ID.
 
-        mid : str, default=None
-            If not ``None``, select tasks with given task manager ID.
-
-        state : str, default=None
+        state : str, list, default=None
             If not ``None``, select tasks with given state.
 
-        name : str, default=None
+        mid : str, list, default=None
+            If not ``None``, select tasks with given task manager ID.
+
+        jobid : str, list, default=None
+            If not ``None``, select tasks with given job ID.
+
+        name : str, list, default=None
             If not ``None``, select tasks with input application name.
 
-        index : int, default=None
+        index : int, list, default=None
             If not ``None``, select tasks with input index.
 
         one : bool, default=None
@@ -863,25 +878,44 @@ class Queue(BaseClass):
             If ``False``, return list.
             If ``None``, and ``tid`` is not ``None``, return a single task; else a list of tasks.
 
-        property : str, default=None
+        property : str, list, default=None
             If not ``None``, instead of returning task(s), return this property
-            (one of 'tid', 'state', 'task_manager').
+            (one of 'tid', 'state', 'jobid', 'task_manager').
 
         Returns
         -------
         tasks : Task, list
             Task or property or property or list of such objects.
         """
-        # View as list
+        def _make_list(obj, tp=str):
+            if obj is None:
+                return [], True
+            one = False
+            if not isinstance(obj, (tuple, list)):
+                one = True
+                obj = [obj]
+            return tuple(tp(oo) for oo in obj), one
+
+        tid = _make_list(tid, tp=str)[0]
+        state = _make_list(state, tp=str)[0]
+        mid = _make_list(mid, tp=str)[0]
+        jobid = _make_list(jobid, tp=str)[0]
+        property, one_property = _make_list(property, tp=str)
+
+        def _to_str(li):
+            return '({})'.format(', '.join(['"{}"'.format(obj) for obj in li]))
+
         select = []
-        if tid is not None:
-            select.append('tid="{}"'.format(tid))
+        if tid:
+            select.append('tid IN {}'.format(_to_str(tid)))
             if one is None: one = True
-        if mid is not None:
-            select.append('mid="{}"'.format(mid))
-        if state is not None:
-            select.append('state="{}"'.format(state))
-        query = 'SELECT task, tid, state, mid FROM tasks'
+        if state:
+            select.append('state IN {}'.format(_to_str(state)))
+        if mid:
+            select.append('mid IN {}'.format(_to_str(mid)))
+        if jobid:
+            select.append('jobid IN {}'.format(_to_str(jobid)))
+        query = 'SELECT task, tid, state, mid, jobid FROM tasks'
         if select: query += ' WHERE {}'.format(' AND '.join(select))
         tasks = self._query(query)
         if one:
@@ -891,30 +925,48 @@ class Queue(BaseClass):
         else:
             tasks = tasks.fetchall()
             if tasks is None: return []
-        if name is not None and index is not None:
+        name, one_name = _make_list(name, tp=str)
+        index, one_index = _make_list(index, tp=int)
+        if one is None and (one_name and one_index):
             one = True
         toret = []
         for task in tasks:
-            (ptask, tid, state, mid), task = task, None
-            if name is not None or index is not None or property is None:
+            (ptask, tid, state, mid, jobid), task = task, None
+            if name or index or not property or any(prop in ['index', 'name'] for prop in property):
                 task = TaskUnpickler.loads(ptask, queue=self)
-                if name is not None and task.app.name != name:
+                if name and task.app.name not in name:
                     continue
-                if index is not None and task.index != index:
+                if index and task.index not in index:
                     continue
-            if property == 'tid':
-                toret.append(tid)
+            if not property or 'task_manager' in property:
+                task_manager = self.managers(mid=mid)
+            props = []
+            for prop in property:
+                if prop == 'tid':
+                    props.append(tid)
+                    continue
+                if prop == 'state':
+                    props.append(state)
+                    continue
+                if prop == 'jobid':
+                    props.append(jobid)
+                    continue
+                if prop == 'index':
+                    props.append(task.index)
+                    continue
+                if prop == 'name':
+                    props.append(task.app.name)
+                    continue
+                if prop == 'task_manager':
+                    props.append(task_manager)
+                    continue
+                if prop is not None:
+                    raise ValueError('unkown property {}'.format(prop))
+            if property:
+                toret.append(props[0] if one_property else tuple(props))
                 continue
-            if property == 'state':
-                toret.append(state)
-                continue
-            task_manager = self.managers(mid=mid)
-            if property == 'task_manager':
-                toret.append(task_manager)
-                continue
-            if property is not None:
-                raise ValueError('unkown property {}'.format(property))
             task.update(state=state)
+            task.update(jobid=jobid)
             task.app.task_manager = task_manager
             toret.append(task)
         if one:
@@ -923,7 +975,7 @@ class Queue(BaseClass):
             return None
         return toret
 
-    def pop(self, tid=None, mid=None):
+    def pop(self, tid=None, mid=None, jobid=None):
         """
         Retrieve a task to be run (i.e. in 'PENDING' state).
 
@@ -935,6 +987,9 @@ class Queue(BaseClass):
         mid : str, default=None
             If not ``None``, pop a task with given task manager ID.
 
+        jobid : str, default=None
+            If not ``None``, set job ID.
+
         Returns
         -------
         task : Task
@@ -944,15 +999,17 @@ class Queue(BaseClass):
             return None
 
         if self._get_lock():
-            task = self.tasks(tid=tid, mid=mid, state=TaskState.PENDING, one=True)
+            task = self.tasks(tid=tid, mid=mid, jobid=jobid, state=TaskState.PENDING, one=True)
         else:
             self.log_warning("There may be tasks left in queue but I couldn't get lock to see")
             return None
         self._release_lock()
         if task is None:
             return None
+        jobid = task.app.task_manager.provider.jobid()
         self.set_task_state(task.id, TaskState.RUNNING)
-        task.update(state=TaskState.RUNNING)
+        self.set_task_jobid(task.id, jobid)
+        task.update(state=TaskState.RUNNING, jobid=jobid)
         return task
 
     def managers(self, mid=None, property=None):
@@ -1084,7 +1141,7 @@ class BaseApp(BaseClass):
         Function doing the job.
 
     name : str
-        :attr:`func` name.
+        :attr:`func` name.jobid
 
     code : str
         :attr:`func` code.
@@ -1422,7 +1479,7 @@ class TaskManager(BaseClass):
         self.scheduler(*args, **kwargs)
 
 
-def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
+def work(queue, mid=None, tid=None, name=None, mpicomm=None, mpisplits=None, provider=None):
     """
     Do the actual work: pop tasks from the input queue, and run them.
 
@@ -1431,20 +1488,29 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
     queue : Queue
         Queue to pop tasks from.
 
-    mid : str, default=None
+    mid : str, list, default=None
         If not ``None``, take tasks with this task manager ID.
 
-    tid : str, default=None
+    tid : str, list, default=None
         If not ``None``, take a task with this task ID.
+
+    name : str, list, default=None
+        If not ``None``, take a task with this name.
 
     mpicomm : MPI communicator, default=mpi.COMM_WORLD
         The MPI communicator.
     """
-    def exit_killed(*args):
+    def exit_killed(signal_number, stack_frame):
         MPI.COMM_WORLD = mpicomm_bak
         task.state = TaskState.KILLED
+        if itask < 1 or signal_number == signal.SIGINT:
+            task.state = TaskState.KILLED
+        else:
+            task.state = TaskState.PENDING  # automatically propose new task
         queue.add(task, replace=True)
         exit()
+
+    itask = 0
 
     signal.signal(signal.SIGINT, exit_killed)
     signal.signal(signal.SIGTERM, exit_killed)
@@ -1459,11 +1525,15 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
         mpicomm = mpicomm.Split(color, 0)
 
     MPI.COMM_WORLD = mpicomm  # a bit hacky
+    jobid = None
+    if provider is not None:
+        provider = get_provider(provider)
+        jobid = provider.jobid()
     while True:
         task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
         if mpicomm.rank == 0:
-            task = queue.pop(mid=mid, tid=tid)
+            task = queue.pop(mid=mid, tid=tid, jobid=jobid)
             task = TaskPickler.dumps(task, reduce_app=None)
         task = TaskUnpickler.loads(mpicomm.bcast(task, root=0))
         if task is None:
@@ -1477,6 +1547,7 @@ def work(queue, mid=None, tid=None, mpicomm=None, mpisplits=None):
         # task.update(jobid=environ.get('DESIPIPE_JOBID', ''))
         if mpicomm.rank == 0:
             queue.add(task, replace=True)
+        itask += 1
 
 
 def spawn(queue, timeout=1e4, timestep=1.):
@@ -1597,23 +1668,26 @@ def action_from_args(action='work', args=None):
         parser.add_argument('-q', '--queue', type=str, required=True, help='Name of queue; user/queue to select user != {}'.format(Config.default_user))
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
+        parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
         parser.add_argument('--mpisplits', type=int, required=False, default=None, help='Number of MPI splits')
         args = parser.parse_args(args=args)
         if '*' in args.queue:
             raise ValueError('Provide single queue!')
-        return work(get_queue(args.queue, create=False), mid=args.mid, tid=args.tid, mpisplits=args.mpisplits)
+        return work(get_queue(args.queue, create=False), mid=args.mid, tid=args.tid, name=args.name, mpisplits=args.mpisplits)
 
     if action == 'tasks':
 
         parser.add_argument('-q', '--queue', type=str, required=True, help='Name of queue; user/queue to select user != {}'.format(Config.default_user))
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
+        parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
+        parser.add_argument('--jobid', type=str, required=False, default=None, help='Job ID')
         parser.add_argument('--state', nargs='*', type=str, required=False, default=TaskState.ALL, choices=TaskState.ALL, help='Task state')
         args = parser.parse_args(args=args)
         if '*' in args.queue:
             raise ValueError('Provide single queue!')
         for state in args.state:
-            tasks = get_queue(args.queue, create=False).tasks(state=state, mid=args.mid, tid=args.tid)
+            tasks = get_queue(args.queue, create=False).tasks(state=state, tid=args.tid, name=args.name, mid=args.mid, jobid=args.jobid, one=False)
             if tasks:
                 logger.info('Tasks that are {}:'.format(state))
                 for task in tasks:
@@ -1622,6 +1696,32 @@ def action_from_args(action='work', args=None):
                         for name in ['jobid', 'errno', 'err', 'out']:
                             logger.info('{}: {}'.format(name, getattr(task, name)))
                     logger.info('=' * 20)
+        return
+
+    if action == 'kill':
+        parser.add_argument('-q', '--queue', nargs='*', type=str, required=False, default=None, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
+        parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
+        parser.add_argument('--tid', type=str, nargs='*', required=False, default=None, help='Task ID')
+        parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
+        parser.add_argument('--jobid', type=str, nargs='*', required=False, default=None, help='Job ID')
+        parser.add_argument('--provider', type=str, required=False, default=None, help='Provider')
+        parser.add_argument('--state', type=str, required=False, default=TaskState.RUNNING, choices=TaskState.ALL, help='Task state')
+        args = parser.parse_args(args=args)
+        provider = args.provider
+        if args.provider is not None: provider = get_provider(args.provider)
+        if args.queue is None:
+            if args.jobid is None:
+                raise ValueError('Provide at least queue or jobid')
+            if provider is None:
+                raise ValueError('Provide provider')
+            provider.kill(*args.jobid)
+        else:
+            queues = get_queue(args.queue, create=False)
+            for queue in queues:
+                for task in queue.tasks(state=args.state, tid=args.tid, name=args.name, mid=args.mid, jobid=args.jobid, one=False):
+                    if not bool(task.jobid): continue
+                    if provider is not None and provider.__class__ is not task.app.task_manager.provider.__class__: continue
+                    task.app.task_manager.provider.kill(task.jobid)
         return
 
     parser.add_argument('-q', '--queue', nargs='*', type=str, required=True, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
@@ -1681,11 +1781,13 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
         parser.add_argument('--state', type=str, required=False, default=TaskState.KILLED, choices=TaskState.ALL, help='Task state')
+        parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
+        parser.add_argument('--jobid', type=str, required=False, default=None, help='Job ID')
         parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process')
         args = parser.parse_args(args=args)
         queues = get_queue(args.queue, create=False)
         for queue in queues:
-            for tid in queue.tasks(mid=args.mid, tid=args.tid, state=args.state, property='tid'):
+            for tid in queue.tasks(mid=args.mid, tid=args.tid, name=args.name, state=args.state, jobid=args.jobid, property='tid', one=False):
                 queue.set_task_state(tid, state=TaskState.PENDING)
         if args.spawn:
             subprocess.Popen(['desipipe', 'spawn', '--queue', ' '.join(args.queue)], start_new_session=True, env=os.environ)
@@ -1702,5 +1804,6 @@ action_from_args.actions = {
     'delete': 'Delete queue and data base',
     'queues': 'List queues',
     'tasks': 'List (failed) tasks of given queue',
-    'retry': 'Move (killed) tasks into PENDING state, so they are rerun'
+    'retry': 'Move (killed) tasks into PENDING state, so they are rerun',
+    'kill': 'Kill running tasks of given queue',
 }
