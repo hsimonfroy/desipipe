@@ -92,6 +92,21 @@ class BaseMutableClass(BaseClass):
         """View as a dictionary (of attributes)."""
         return {name: getattr(self, name) for name in self._defaults}
 
+    def __eq__(self, other):
+
+        def deep_eq(obj1, obj2):
+            """(Recursively) test equality between ``obj1`` and ``obj2``."""
+            if type(obj2) == type(obj1):
+                if isinstance(obj1, dict):
+                    if obj2.keys() == obj1.keys():
+                        return all(deep_eq(obj1[name], obj2[name]) for name in obj1)
+                elif hasattr(obj1, '__iter__') and not isinstance(obj1, str):
+                    if len(obj2) == len(obj1):
+                        return all(deep_eq(o1, o2) for o1, o2 in zip(obj1, obj2))
+                else:
+                    return obj2 == obj1
+            return False
+        return type(other) == type(self) and all(deep_eq(getattr(other, name), getattr(self, name)) for name in self._defaults)
 
 def _make_list(values):
     """Turn input ``values`` (single value, list, iterator, etc.) into a list."""

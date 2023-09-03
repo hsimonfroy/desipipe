@@ -20,9 +20,13 @@ def test_file_manager():
     assert len(fmp) == 1
     assert len(fmp.filepaths) == 6
     for fn in fmp:
+        assert fn == fn
         print(fn, fn.get(option='my_option').filepath)
     for fn in fm.select(filetype='catalog'):
+        assert fn == fn
         print(fn.filepath)
+    for fn1, fn2 in zip(fm.select(filetype='catalog'), fm.select(filetype='catalog')):
+        assert fn2.filepath == fn1.filepath
     for fn in fm.select(filetype='catalog').iter(exclude=['field']):
         assert len(fn.options['field']) == 2
     fmp.append(dict(description='added file', id='added_file', filetype='catalog', path='test.fits'))
