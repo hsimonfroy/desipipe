@@ -151,9 +151,19 @@ def in_options(values, options, return_index=False):
     return toret
 
 
-def iter_options(options):
-    for values in itertools.product(*[[Ellipsis] if values is Ellipsis else values for values in options.values()]):
-        yield {name: Ellipsis if options[name] is Ellipsis else [values[iname]] for iname, name in enumerate(options)}
+def iter_options(options, include=None, exclude=None):
+    if include is None:
+        include = list(options.keys())
+    if exclude is None:
+        exclude = []
+    include, exclude = _make_list(include), _make_list(exclude)
+    include = [name for name in options if name in include and not name in exclude]
+
+    for values in itertools.product(*[[Ellipsis] if options[name] is Ellipsis else options[name] for name in include]):
+        opt = dict(options)
+        for iname, name in enumerate(include):
+            opt[name] = Ellipsis if options[name] is Ellipsis else [values[iname]]
+        yield opt
 
 
 class BaseFile(BaseMutableClass):
@@ -734,19 +744,47 @@ class FileManager(FileEntryCollection):
             options = _intersect(options, entry.options)
         return options
 
-    def __iter__(self):
-        """Loop over options that are common to all file entries (:attr:`options`), and yield the (selected) :class:`FileEntryCollection` instances."""
+    def iter(self, include=None, exclude=None):
+        """
+        Iterate over options that are common to all file entries (:attr:`options`),
+        and return the list of the (selected) :class:`FileManager` instances.
+
+        Parameters
+        ----------
+        include : str, list, default=None
+            List of options to include in the iteration.
+            ``None`` to include all options.
+
+        exclude : str, list, default=None
+            List of options to exclude in the iteration.
+            ``None`` to not exclude any option.
+
+        Returns
+        -------
+        fms : list of the (selected) :class:`FileManager` instances.
+        """
         if not self.data:
-            return
-        for options in iter_options(self.options):
-            database = self.clone(data=[])
+            return []
+        fms = []
+        for options in iter_options(self.options, include=include, exclude=exclude):
+            fm = self.clone(data=[])
             for entry in self.data:
                 entry = entry.select(**{**entry.options, **options})
-                database.append(entry)
-            yield database
+                fm.append(entry)
+            fms.append(fm)
+        return fms
+
+    def __iter__(self):
+        """
+        Iterate over options that are common to all file entries (:attr:`options`),
+        and yield the (selected) :class:`FileManager` instances.
+        """
+        for fm in self.iter(include=None, exclude=None):
+            yield fm
 
     @classmethod
     def databases(cls, keywords=None):
+        """List of paths to available data bases following desipipe's configuration (see :class:`Config`)."""
         if keywords is not None:
             keywords = _make_list(keywords)
             keywords = [keyword.lower().split() for keyword in keywords]

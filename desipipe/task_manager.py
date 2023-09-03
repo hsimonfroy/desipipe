@@ -369,7 +369,7 @@ class Task(BaseClass):
         - set :attr:`state`: 'KILLED' if termination signal, 'FAILED' if :class:`BaseApp.run` raised an excpetion, else 'SUCCEEDED'.
 
         """
-        from .file_manager import File
+        from .file_manager import BaseFile
         t0 = time.time()
 
         def write_attrs(file, base_dir):
@@ -392,9 +392,9 @@ class Task(BaseClass):
                 shutil.copytree(self.app.dirname, dirname, dirs_exist_ok=True)
             return self.app.write_dir  # destination
 
-        File.write_attrs = write_attrs  # save main script and versions whenever a file is written to disk
+        BaseFile.write_attrs = write_attrs  # save main script and versions whenever a file is written to disk
         self.errno, self.result, self.err, self.out, self.versions = self.app.run(**{**self.kwargs, **kwargs})
-        File.write_attrs = None
+        BaseFile.write_attrs = None
         if self.errno:
             if self.errno == signal.SIGTERM:
                 self.state = TaskState.KILLED
@@ -477,11 +477,21 @@ queue_states = ['ACTIVE', 'PAUSED']
 QueueState = type('QueueState', (), {**dict(zip(queue_states, queue_states)), 'ALL': queue_states})
 
 
+def _make_list(obj, tp=str):
+    if obj is None:
+        return [], True
+    one = False
+    if not isinstance(obj, (tuple, list)):
+        one = True
+        obj = [obj]
+    return tuple(tp(oo) for oo in obj), one
+
+
 class Queue(BaseClass):
 
     """Queue keeping track of all tasks that have been run and to be run, with sqlite backend."""
 
-    def __init__(self, name, base_dir=None, create=None, spawn=False):
+    def __init__(self, name, base_dir=None, create=None):
         """
         Initialize queue.
 
@@ -500,9 +510,6 @@ class Queue(BaseClass):
             If ``True``, create a new queue; a :class:`ValueError` is raised if the queue already exists.
             If ``False``, do not create the queue; a class:`ValueError` is raised if no queue exists.
             If ``None`` (default), create the queue if does not exist.
-
-        spawn : bool, default=False
-            If ``True``, spawn a manager process that will distribute the tasks among workers.
         """
         if isinstance(name, self.__class__):
             self.__dict__.update(name.__dict__)
@@ -574,10 +581,6 @@ class Queue(BaseClass):
         else:
             self.log_debug('Connection to queue {}'.format(self.filename))
             self.db = sqlite3.Connection(self.filename, timeout=60)
-        if spawn:
-            cmd = ['desipipe', 'spawn', '--queue', self.filename]
-            self.log_info('Spawning: {}'.format(' '.join(cmd)))
-            subprocess.Popen(cmd, start_new_session=True, env=os.environ)
 
     def _query(self, query, timeout=120., timestep=1., many=False):
         """
@@ -887,15 +890,6 @@ class Queue(BaseClass):
         tasks : Task, list
             Task or property or property or list of such objects.
         """
-        def _make_list(obj, tp=str):
-            if obj is None:
-                return [], True
-            one = False
-            if not isinstance(obj, (tuple, list)):
-                one = True
-                obj = [obj]
-            return tuple(tp(oo) for oo in obj), one
-
         tid = _make_list(tid, tp=str)[0]
         state = _make_list(state, tp=str)[0]
         mid = _make_list(mid, tp=str)[0]
@@ -975,20 +969,17 @@ class Queue(BaseClass):
             return None
         return toret
 
-    def pop(self, tid=None, mid=None, jobid=None):
+    def pop(self, state=TaskState.PENDING, **kwargs):
         """
         Retrieve a task to be run (i.e. in 'PENDING' state).
 
         Parameters
         ----------
-        tid : str, default=None
-            If not ``None``, pop the task with given ID.
+        state : str, list, default='PENDING'
+            Select a task with this state.
 
-        mid : str, default=None
-            If not ``None``, pop a task with given task manager ID.
-
-        jobid : str, default=None
-            If not ``None``, set job ID.
+        **kwargs : dict
+            Optional arguments to select task: tid, mid, name, etc.
 
         Returns
         -------
@@ -999,7 +990,7 @@ class Queue(BaseClass):
             return None
 
         if self._get_lock():
-            task = self.tasks(tid=tid, mid=mid, jobid=jobid, state=TaskState.PENDING, one=True)
+            task = self.tasks(state=state, one=True, **kwargs)
         else:
             self.log_warning("There may be tasks left in queue but I couldn't get lock to see")
             return None
@@ -1128,7 +1119,7 @@ class Queue(BaseClass):
 
     def __setstate__(self, state):
         """Set queue state, from the file name."""
-        self.__init__(state['filename'], base_dir='', create=False, spawn=False)
+        self.__init__(state['filename'], base_dir='', create=False)
 
 
 class BaseApp(BaseClass):
@@ -1390,7 +1381,7 @@ class TaskManager(BaseClass):
 
     .. code-block:: python
 
-        queue = Queue('test', base_dir='_tests', spawn=True)
+        queue = Queue('test', base_dir='_tests')
         tm = TaskManager(queue, environ=Environment(), scheduler=dict(max_workers=10))
 
         @tm.python_app
@@ -1479,7 +1470,7 @@ class TaskManager(BaseClass):
         self.scheduler(*args, **kwargs)
 
 
-def work(queue, mid=None, tid=None, name=None, mpicomm=None, mpisplits=None, provider=None):
+def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm=None, mpisplits=None):
     """
     Do the actual work: pop tasks from the input queue, and run them.
 
@@ -1497,8 +1488,18 @@ def work(queue, mid=None, tid=None, name=None, mpicomm=None, mpisplits=None, pro
     name : str, list, default=None
         If not ``None``, take a task with this name.
 
+    provider : str, default=None
+        Name of provider, to get process ID. Defaults to the manager's provider.
+
+    mode : str, default=None
+        Processing mode.
+        'stop_at_error' to stop as soon as a task is failed.
+
     mpicomm : MPI communicator, default=mpi.COMM_WORLD
         The MPI communicator.
+
+    mpisplits : int, default=None
+        Split MPI communicator in this number of subcommunicators to run ``mpisplits`` tasks in parallel.
     """
     def exit_killed(signal_number, stack_frame):
         MPI.COMM_WORLD = mpicomm_bak
@@ -1510,6 +1511,7 @@ def work(queue, mid=None, tid=None, name=None, mpicomm=None, mpisplits=None, pro
         queue.add(task, replace=True)
         exit()
 
+    queue = get_queue(queue, create=False, one=True)
     itask = 0
 
     signal.signal(signal.SIGINT, exit_killed)
@@ -1533,7 +1535,7 @@ def work(queue, mid=None, tid=None, name=None, mpicomm=None, mpisplits=None, pro
         task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
         if mpicomm.rank == 0:
-            task = queue.pop(mid=mid, tid=tid, jobid=jobid)
+            task = queue.pop(mid=mid, tid=tid, name=name, jobid=jobid)
             task = TaskPickler.dumps(task, reduce_app=None)
         task = TaskUnpickler.loads(mpicomm.bcast(task, root=0))
         if task is None:
@@ -1548,9 +1550,11 @@ def work(queue, mid=None, tid=None, name=None, mpicomm=None, mpisplits=None, pro
         if mpicomm.rank == 0:
             queue.add(task, replace=True)
         itask += 1
+        if mode == 'stop_at_error' and task.state == TaskState.FAILED:
+            break
 
 
-def spawn(queue, timeout=1e4, timestep=1.):
+def spawn(queue, timeout=1e4, timestep=1., mode=None, spawn=False):
     """
     Distribute tasks to workers.
     If all queues are paused, the function terminates.
@@ -1565,20 +1569,37 @@ def spawn(queue, timeout=1e4, timestep=1.):
 
     timestep : float, default=1.
         Period (in seconds) at which the queue is queried for new tasks.
+
+    mode : str, default=None
+        Processing mode.
+        'stop_at_error' to stop as soon as a task is failed.
+
+    spawn : bool, default=False
+        If ``True``, spawn a new manager process and exit this one.
     """
-    queues = [queue] if isinstance(queue, Queue) else queue
+    queues = get_queue(queue, create=False, one=False)
+
+    if spawn:
+        subprocess.Popen(['desipipe', 'spawn', '--queue', ' '.join([queue.filename for queue in queues]), '--timeout', str(timeout), '--mode', str(mode)], start_new_session=True, env=os.environ)
+        return
+
     t0 = time.time()
-    stop = False
     qmanagers = [{} for i in range(len(queues))]
+    stop = False
+    nsteps, stop_after_nsteps = 0, 10
     while True:
-        time.sleep(timestep * random.uniform(0.8, 1.2))
         if (time.time() - t0) > timeout:
             break
         if all(queue.paused for queue in queues) or stop:
             break
-        stop = True
+        if nsteps == stop_after_nsteps:
+            nsteps = 0
+            stop = True
+        nsteps += 1
         for queue, managers in zip(queues, qmanagers):
             if queue.paused:
+                continue
+            if mode == 'stop_at_error' and queue.counts(state=TaskState.FAILED):
                 continue
             if queue.counts(state=TaskState.PENDING) or (queue.counts(state=TaskState.WAITING) and queue.counts(state=TaskState.RUNNING)):
                 stop = False
@@ -1590,10 +1611,80 @@ def spawn(queue, timeout=1e4, timestep=1.):
                 # print(ntasks, queue.counts(mid=manager.id, state=TaskState.PENDING), queue.counts(mid=manager.id, state=TaskState.WAITING), stop, flush=True)
                 if ntasks:
                     # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
-                    manager.spawn('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id), ntasks=ntasks)
+                    manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=ntasks)
+        time.sleep(timestep * random.uniform(0.8, 1.2))
+    print('TERMINATED')
 
 
-def get_queue(queue, create=None, spawn=False):
+def kill(queue=None, provider=None, jobid=None, state=None, **kwargs):
+    """
+    Kill launched jobs.
+
+    Parameters
+    ----------
+    queue : Queue, list, default=None
+        Queue or list of queues to process.
+        If ``None``, ``jobid`` must be provided.
+
+    provider : BaseProvider, str, dict, default=None
+        To access :meth:`BaseProvider.kill` method.
+        See :func:`get_provider`.
+
+    jobid : str, list, default=None
+        IDs of jobs to kill.
+
+    state : str, default=None
+        State of tasks to kill.
+        If ``jobid`` is not provided, defaults to RUNNING.
+
+    **kwargs : dict
+        Optional arguments to select tasks in ``queue`` to be killed: tid, mid, name.
+        See :meth:`Queue.tasks`.
+    """
+    if provider is not None:
+        provider = get_provider(provider)
+    if jobid is not None:
+        jobid = _make_list(jobid, tp=str)[0]
+    elif state is None:
+        state = TaskState.RUNNING
+    if queue is None:
+        if jobid is None:
+            raise ValueError('Provide at least queue or jobid')
+        if provider is None:
+            raise ValueError('Provide provider')
+        provider.kill(*jobid)
+    else:
+        queues = get_queue(queue, create=False, one=False)
+        for queue in queues:
+            for task in queue.tasks(jobid=jobid, one=False, state=state, **kwargs):
+                if not bool(task.jobid): continue
+                if provider is not None and provider.__class__ is not task.app.task_manager.provider.__class__: continue
+                task.app.task_manager.provider.kill(task.jobid)
+
+
+def retry(queue, state=TaskState.KILLED, **kwargs):
+    """
+    Move (by default killed) tasks into PENDING state, so they are rerun.
+
+    Parameters
+    ----------
+    queue : Queue, list, default=None
+        Queue or list of queues to process.
+        If ``None``, ``jobid`` must be provided.
+
+    state : str, default='KILLED'
+        State of tasks to move to PENDING state.
+
+    **kwargs : dict
+        Optional arguments to select tasks in ``queue`` to be moved to PENDING state: tid, mid, name, etc.
+    """
+    queues = get_queue(queue, create=False, one=False)
+    for queue in queues:
+        for tid in queue.tasks(property='tid', one=False, **kwargs):
+            queue.set_task_state(tid, state=TaskState.PENDING)
+
+
+def get_queue(queue, create=None, one=True):
     """
     Return queue.
 
@@ -1607,25 +1698,32 @@ def get_queue(queue, create=None, spawn=False):
         If ``False``, do not create the queue; a class:`ValueError` is raised if no queue exists.
         If ``None`` (default), create the queue if does not exist.
 
-    spawn : bool, default=False
-        If ``True``, spawn a manager process that will distribute the tasks among workers.
+    one : bool, default=True
+        If ``True``, return one queue. Raise a :class:`ValueError` if ``queue`` corresponds to several queues.
+        If ``False``, ensure a list of queues is returned.
 
     Returns
     -------
     queue : Queue, list
         Queue or list of queues.
     """
+    def format_output(queues):
+        if one:
+            if isinstance(queues, list):
+                if len(queues) > 1:
+                    raise ValueError('Provide single queue!')
+                return queues[0]
+        elif not isinstance(queues, list):
+            return [queues]
+        return queues
+
     if isinstance(queue, list):
         toret = []
         for queue in queue:
-            tmp = get_queue(queue, create=create, spawn=spawn)
-            if isinstance(tmp, Queue):
-                toret.append(tmp)
-            else:
-                toret += tmp
-        return toret
+            toret += get_queue(queue, create=create, one=False)
+        return format_output(toret)
     if isinstance(queue, Queue):
-        return queue
+        return format_output(queue)
     if '/' in queue:
         if queue.startswith('.'):
             queue = os.path.abspath(queue)
@@ -1634,8 +1732,12 @@ def get_queue(queue, create=None, spawn=False):
     else:
         queue = os.path.join(Config().queue_dir, queue)
     if '*' in queue:
-        return [get_queue(queue, create=create, spawn=spawn) for queue in glob.glob(queue) if queue.endswith('.sqlite')]
-    return Queue(queue, create=create, spawn=spawn)
+        toret = []
+        for queue in glob.glob(queue):
+            if queue.endswith('.sqlite'):
+                toret += get_queue(queue, create=create, one=False)
+        return format_output(toret)
+    return format_output(Queue(queue, create=create))
 
 
 def action_from_args(action='work', args=None):
@@ -1653,8 +1755,7 @@ def action_from_args(action='work', args=None):
 
         parser.add_argument('-q', '--queue', type=str, required=False, default='*/*', help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
         args = parser.parse_args(args=args)
-        queues = get_queue(args.queue, create=False)
-        if isinstance(queues, Queue): queues = [queues]
+        queues = get_queue(args.queue, create=False, one=False)
         if not queues:
             logger.info('No matching queue')
             return
@@ -1669,11 +1770,10 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
         parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
+        parser.add_argument('--mode', type=str, required=False, default=None, help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
         parser.add_argument('--mpisplits', type=int, required=False, default=None, help='Number of MPI splits')
         args = parser.parse_args(args=args)
-        if '*' in args.queue:
-            raise ValueError('Provide single queue!')
-        return work(get_queue(args.queue, create=False), mid=args.mid, tid=args.tid, name=args.name, mpisplits=args.mpisplits)
+        return work(args.queue, mid=args.mid, tid=args.tid, name=args.name, mode=args.mode, mpisplits=args.mpisplits)
 
     if action == 'tasks':
 
@@ -1684,10 +1784,9 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--jobid', type=str, required=False, default=None, help='Job ID')
         parser.add_argument('--state', nargs='*', type=str, required=False, default=TaskState.ALL, choices=TaskState.ALL, help='Task state')
         args = parser.parse_args(args=args)
-        if '*' in args.queue:
-            raise ValueError('Provide single queue!')
+        queue = get_queue(args.queue, create=False, one=True)
         for state in args.state:
-            tasks = get_queue(args.queue, create=False).tasks(state=state, tid=args.tid, name=args.name, mid=args.mid, jobid=args.jobid, one=False)
+            tasks = queue.tasks(state=state, tid=args.tid, name=args.name, mid=args.mid, jobid=args.jobid, one=False)
             if tasks:
                 logger.info('Tasks that are {}:'.format(state))
                 for task in tasks:
@@ -1707,22 +1806,7 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--provider', type=str, required=False, default=None, help='Provider')
         parser.add_argument('--state', type=str, required=False, default=TaskState.RUNNING, choices=TaskState.ALL, help='Task state')
         args = parser.parse_args(args=args)
-        provider = args.provider
-        if args.provider is not None: provider = get_provider(args.provider)
-        if args.queue is None:
-            if args.jobid is None:
-                raise ValueError('Provide at least queue or jobid')
-            if provider is None:
-                raise ValueError('Provide provider')
-            provider.kill(*args.jobid)
-        else:
-            queues = get_queue(args.queue, create=False)
-            for queue in queues:
-                for task in queue.tasks(state=args.state, tid=args.tid, name=args.name, mid=args.mid, jobid=args.jobid, one=False):
-                    if not bool(task.jobid): continue
-                    if provider is not None and provider.__class__ is not task.app.task_manager.provider.__class__: continue
-                    task.app.task_manager.provider.kill(task.jobid)
-        return
+        return kill(queue=args.queue, provider=args.provider, jobid=args.jobid, state=args.state, tid=args.tid, mid=args.mid)
 
     parser.add_argument('-q', '--queue', nargs='*', type=str, required=True, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
 
@@ -1730,7 +1814,7 @@ def action_from_args(action='work', args=None):
 
         parser.add_argument('--force', action='store_true', help='Pass this flag to force delete')
         args = parser.parse_args(args=args)
-        queues = get_queue(args.queue, create=False)
+        queues = get_queue(args.queue, create=False, one=False)
         if not queues:
             logger.info('No queue to delete.')
             return
@@ -1747,7 +1831,7 @@ def action_from_args(action='work', args=None):
     if action == 'pause':
 
         args = parser.parse_args(args=args)
-        queues = get_queue(args.queue, create=False)
+        queues = get_queue(args.queue, create=False, one=False)
         for queue in queues:
             logger.info('Pausing queue {}'.format(repr(queue)))
             queue.pause()
@@ -1757,24 +1841,21 @@ def action_from_args(action='work', args=None):
 
         parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process')
         args = parser.parse_args(args=args)
-        queues = get_queue(args.queue, create=False)
+        queues = get_queue(args.queue, create=False, one=False)
         for queue in queues:
             logger.info('Resuming queue {}'.format(repr(queue)))
             queue.resume()
         if args.spawn:
-            subprocess.Popen(['desipipe', 'spawn', '--queue', ' '.join(args.queue)], start_new_session=True, env=os.environ)
+            spawn(args.queue, spawn=True)
         return
 
     if action == 'spawn':
 
         parser.add_argument('--timeout', type=float, required=False, default=1e4, help='Stop after this time')
+        parser.add_argument('--mode', type=str, required=False, default=None, help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
         parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process and exit this one')
         args = parser.parse_args(args=args)
-        if args.spawn:
-            subprocess.Popen(['desipipe', 'spawn', '--queue', ' '.join(args.queue), '--timeout', str(args.timeout)], start_new_session=True, env=os.environ)
-            return
-        queues = get_queue(args.queue, create=False)
-        return spawn(queues, timeout=args.timeout)
+        return spawn(args.queue, timeout=args.timeout, mode=args.mode, spawn=args.spawn)
 
     if action == 'retry':
 
@@ -1785,12 +1866,10 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--jobid', type=str, required=False, default=None, help='Job ID')
         parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process')
         args = parser.parse_args(args=args)
-        queues = get_queue(args.queue, create=False)
-        for queue in queues:
-            for tid in queue.tasks(mid=args.mid, tid=args.tid, name=args.name, state=args.state, jobid=args.jobid, property='tid', one=False):
-                queue.set_task_state(tid, state=TaskState.PENDING)
+        queues = get_queue(args.queue, create=False, one=False)
+        retry(queues, mid=args.mid, tid=args.tid, name=args.name, state=args.state, jobid=args.jobid)
         if args.spawn:
-            subprocess.Popen(['desipipe', 'spawn', '--queue', ' '.join(args.queue)], start_new_session=True, env=os.environ)
+            spawn(queues, spawn=True)
         return
 
     raise ValueError('unknown action {}; pick from {}'.format(action, list(action_from_args.actions.keys())))
@@ -1804,6 +1883,6 @@ action_from_args.actions = {
     'delete': 'Delete queue and data base',
     'queues': 'List queues',
     'tasks': 'List (failed) tasks of given queue',
-    'retry': 'Move (killed) tasks into PENDING state, so they are rerun',
+    'retry': 'Move (by default killed) tasks into PENDING state, so they are rerun.',
     'kill': 'Kill running tasks of given queue',
 }

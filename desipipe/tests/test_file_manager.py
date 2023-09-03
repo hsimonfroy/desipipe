@@ -23,6 +23,8 @@ def test_file_manager():
         print(fn, fn.get(option='my_option').filepath)
     for fn in fm.select(filetype='catalog'):
         print(fn.get().filepath)
+    for fn in fm.select(filetype='catalog').iter(exclude=['field']):
+        assert len(fn.options['field']) == 2
     fmp.append(dict(description='added file', id='added_file', filetype='catalog', path='test.fits'))
     fmp.append(MyFileEntry(dict(description='added file', id='added_file_2', filetype='catalog', path='test_{option}.fits', options={'option': ['my_option']})))
     fmp.append(dict(fileentry='my_file_entry', description='added file', id='added_file_3', filetype='catalog', path='test_{option}.fits', options={'option': ['my_option_2']}))

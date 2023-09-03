@@ -37,7 +37,11 @@ def test_serialization():
 
 def test_queue(spawn=True, run=False):
 
-    queue = Queue('test', base_dir=base_dir, spawn=spawn)
+    tospawn = spawn
+    if spawn: run = False
+
+    from desipipe import spawn
+    queue = Queue('test', base_dir=base_dir)
     provider = dict(provider='local')
     if os.getenv('NERSC_HOST', None):
         provider = dict(time='00:01:00', nodes_per_worker=0.1)
@@ -81,7 +85,8 @@ def test_queue(spawn=True, run=False):
     avg = average(fractions)
     avg2 = average2(fractions)
     assert average3(fractions) is None
-    if spawn:
+    if tospawn:
+        spawn(queue)
         print(queue.summary())
         print(ech.out())
         assert avg2.result() == avg.result()
@@ -91,10 +96,11 @@ def test_queue(spawn=True, run=False):
     def fraction():
         return None
 
-    if spawn:
+    if tospawn:
         for frac in fractions:
             assert fraction().result() == frac.result()  # the previous fraction result is used
-    elif run:
+
+    if run:
         from desipipe.task_manager import TaskPickler, TaskUnpickler
         task = queue.pop()
         pkl = TaskPickler.dumps(task, reduce_app=False)
@@ -103,9 +109,26 @@ def test_queue(spawn=True, run=False):
         task.run()
         print(task.err, task.out)
 
-    if spawn:
+    queue.pause()
+    time.sleep(5)
+    queue.resume()
+
+    @tm2.python_app
+    def error():
+        raise ValueError
+
+    if tospawn:
+        #spawn(queue, mode='stop_at_error')
+        #print(queue.summary())
+        for i in range(10):
+            err = error()
+        spawn(queue, mode='stop_at_error')
+        err.result()
+        assert queue.counts(state='FAILED') == 1
+
         for tid in queue.tasks(name='fraction', property='tid'):
             del queue[tid]
+
         queue.delete()
 
 
@@ -161,8 +184,8 @@ def test_file(spawn=True):
 
 if __name__ == '__main__':
 
-    test_serialization()
-    test_app()
+    #test_serialization()
+    #test_app()
     test_queue(spawn=True, run=False)
-    test_cmdline()
-    test_file(spawn=True)
+    #test_cmdline()
+    #test_file(spawn=True)
