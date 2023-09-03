@@ -744,7 +744,7 @@ class FileManager(FileEntryCollection):
             options = _intersect(options, entry.options)
         return options
 
-    def iter(self, include=None, exclude=None):
+    def iter(self, include=None, exclude=None, get=None):
         """
         Iterate over options that are common to all file entries (:attr:`options`),
         and return the list of the (selected) :class:`FileManager` instances.
@@ -759,6 +759,12 @@ class FileManager(FileEntryCollection):
             List of options to exclude in the iteration.
             ``None`` to not exclude any option.
 
+        get : bool, default=None
+            If ``False``, return a list of :class:`FileManager` instances.
+            If ``True``, call :meth:`FileManager.get` to return a list of :class:`BaseFile` instances.
+            If ``None``, and there are single options in :class:`FileManager` instances,
+            call :meth:`FileManager.get` to return a list of :class:`BaseFile` instances.
+
         Returns
         -------
         fms : list of the (selected) :class:`FileManager` instances.
@@ -772,6 +778,20 @@ class FileManager(FileEntryCollection):
                 entry = entry.select(**{**entry.options, **options})
                 fm.append(entry)
             fms.append(fm)
+        if get is False:
+            return fms
+        if get is None:
+            for fm in fms:
+                if len(fm.data) == 1:
+                    options = fm.data[0].options
+                    if Ellipsis in options.values() or any(len(values) != 1 for values in options.values()):
+                        get = False
+                else:
+                    get = False
+                if get is False: break
+            if get is None: get = True
+        if get:
+            return [fm.get() for fm in fms]
         return fms
 
     def __iter__(self):
@@ -779,7 +799,7 @@ class FileManager(FileEntryCollection):
         Iterate over options that are common to all file entries (:attr:`options`),
         and yield the (selected) :class:`FileManager` instances.
         """
-        for fm in self.iter(include=None, exclude=None):
+        for fm in self.iter(include=None, exclude=None, get=None):
             yield fm
 
     @classmethod

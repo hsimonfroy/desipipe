@@ -22,7 +22,7 @@ def test_file_manager():
     for fn in fmp:
         print(fn, fn.get(option='my_option').filepath)
     for fn in fm.select(filetype='catalog'):
-        print(fn.get().filepath)
+        print(fn.filepath)
     for fn in fm.select(filetype='catalog').iter(exclude=['field']):
         assert len(fn.options['field']) == 2
     fmp.append(dict(description='added file', id='added_file', filetype='catalog', path='test.fits'))
