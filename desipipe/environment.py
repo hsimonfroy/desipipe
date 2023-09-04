@@ -32,6 +32,14 @@ def bash_env(cmd):
     return environ
 
 
+def _make_list(obj, tp=str):
+    if obj is None:
+        return tuple()
+    if not isinstance(obj, (tuple, list)):
+        obj = [obj]
+    return tuple(tp(oo) for oo in obj)
+
+
 class RegisteredEnvironment(type(BaseDict)):
 
     """Metaclass registering :class:`BaseEnvironment`-derived classes."""
@@ -67,9 +75,9 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
         self.data = {}
         for name, value in self._defaults.items():
             self.setdefault(name, copy.copy(value))
-        self.command = getattr(self, '_command', None)
+        self.command = _make_list(getattr(self, '_command', []), tp=str)
         if command is not None:
-            self.command = str(command)
+            self.command += _make_list(command, tp=str)
         self.update(**(data or {}))
 
     def to_dict(self, all=False):  # including command
@@ -88,8 +96,8 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
         and variables defined in this instance.
         """
         toret = ''
-        if all and self.command:
-            toret += self.command + sep
+        if all:
+            toret += sep.join(self.command)
         toret += sep.join(['export {}={}'.format(name, value) for name, value in self.items()])
         return toret
 

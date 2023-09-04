@@ -93,20 +93,21 @@ class BaseMutableClass(BaseClass):
         return {name: getattr(self, name) for name in self._defaults}
 
     def __eq__(self, other):
+        return type(other) == type(self) and all(_deep_eq(getattr(other, name), getattr(self, name)) for name in self._defaults)
 
-        def deep_eq(obj1, obj2):
-            """(Recursively) test equality between ``obj1`` and ``obj2``."""
-            if type(obj2) == type(obj1):
-                if isinstance(obj1, dict):
-                    if obj2.keys() == obj1.keys():
-                        return all(deep_eq(obj1[name], obj2[name]) for name in obj1)
-                elif hasattr(obj1, '__iter__') and not isinstance(obj1, str):
-                    if len(obj2) == len(obj1):
-                        return all(deep_eq(o1, o2) for o1, o2 in zip(obj1, obj2))
-                else:
-                    return obj2 == obj1
-            return False
-        return type(other) == type(self) and all(deep_eq(getattr(other, name), getattr(self, name)) for name in self._defaults)
+
+def _deep_eq(obj1, obj2):
+    """(Recursively) test equality between ``obj1`` and ``obj2``."""
+    if type(obj2) == type(obj1):
+        if isinstance(obj1, dict):
+            if obj2.keys() == obj1.keys():
+                return all(_deep_eq(obj1[name], obj2[name]) for name in obj1)
+        elif hasattr(obj1, '__iter__') and not isinstance(obj1, str):
+            if len(obj2) == len(obj1):
+                return all(_deep_eq(o1, o2) for o1, o2 in zip(obj1, obj2))
+        else:
+            return obj2 == obj1
+    return False
 
 def _make_list(values):
     """Turn input ``values`` (single value, list, iterator, etc.) into a list."""
@@ -219,7 +220,11 @@ class BaseFile(BaseMutableClass):
             placeholder_nobrackets = placeholder[2:-1]
             if placeholder_nobrackets in environ:
                 path = path.replace(placeholder, environ[placeholder_nobrackets])
-        return path.format(**self.foptions)
+        # return path.format(**self.foptions)
+        def fstr(template, **kwargs):
+            return eval(f"f'{template}'", kwargs)
+
+        return fstr(path, **self.options)
 
     def read(self, *args, **kwargs):
         """Read file from disk."""
@@ -406,7 +411,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
 
 
-def get_file_entry(file_entry=None, **kwargs):
+def get_file_entry(file_entry=None, file_entry_collection=None, **kwargs):
     """
     Convenient function that returns the file entry.
 
@@ -432,6 +437,11 @@ def get_file_entry(file_entry=None, **kwargs):
         file_entry, kwargs = file_entry.pop('fileentry', None), {**file_entry, **kwargs}
     if file_entry is None:
         file_entry = 'base'
+    if file_entry_collection is not None and 'import' in kwargs:
+        ref = file_entry_collection.select(id=kwargs.pop('import')).data[0]
+        options = kwargs.get('options', {}) or {}  # in case None
+        options = {**ref.options, **options}
+        kwargs = {**ref.to_dict(), **kwargs, **{'options': options}}
     return BaseFileEntry._registry[file_entry](**kwargs)
 
 
@@ -637,7 +647,7 @@ class FileEntryCollection(BaseClass):
 
     def _get_file_entry(self, entry):
         """Turn ``entry`` may be e.g. a dictionary, or a :class:`BaseFileEntry` instance, in a :class:`BaseFileEntry` instance."""
-        entry = get_file_entry(entry)
+        entry = get_file_entry(entry, file_entry_collection=self)
         entry.environ = self.environ
         return entry
 
@@ -669,6 +679,9 @@ class FileEntryCollection(BaseClass):
                 di = entry.to_dict()
                 if entry.name != 'base':
                     di['fileentry'] = entry.name
+                di['foptions'] = {name: values for name, values in di['foptions'].items() if not _deep_eq(values, di['options'][name])}
+                if not di['foptions']:
+                    di.pop('foptions')
                 dis.append(utils.dict_to_yaml(di))
             yaml.dump_all(dis, file, default_flow_style=False)
 

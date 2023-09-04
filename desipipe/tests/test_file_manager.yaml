@@ -10,9 +10,15 @@ options:
 description: Power spectra of lognormal catalogs.
 id: lognormal_catalog_power
 filetype: power
-path: ${DESIPIPEENVDIR}/_pk/power_{option}_{tracer}_{zrange[0]:.2f}_{zrange[1]:.2f}_{imock:d}.fits
+path: ${DESIPIPEENVDIR}/_pk/power_{option}_{"LRG_test" if tracer == "LRG" else tracer}_{zrange[0]:.2f}_{zrange[1]:.2f}_{imock:d}.fits
 options:
   option:
   tracer: {'LRG': 'LRG', 'ELG': 'ELG_LOP'}
   imock: range(0, 3, 1)
   zrange: [[1., 1.2], [1.2, 1.4]]
+---
+import: lognormal_catalog_power
+description: Correlation functions of lognormal catalogs.
+id: lognormal_catalog_correlation
+filetype: corr
+path: ${DESIPIPEENVDIR}/_xi/corr_{option}_{tracer}_{zrange[0]:.2f}_{zrange[1]:.2f}_{imock:d}.fits
