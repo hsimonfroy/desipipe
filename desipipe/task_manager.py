@@ -1087,7 +1087,7 @@ class Queue(BaseClass):
         if return_type == 'str':
             toret = ['{:10s}: {}'.format(state, count) for state, count in counts.items()]
             return '\n'.join(toret)
-        raise ValueError('Unkown return_type {}'.format(return_type))
+        raise ValueError('Unknown return_type {}'.format(return_type))
 
     def __repr__(self):
         """String representation of queue: size, state and file name."""

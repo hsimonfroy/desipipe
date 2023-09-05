@@ -226,6 +226,9 @@ class BaseFile(BaseMutableClass):
 
         return fstr(path, **self.options)
 
+    def exists(self):
+        return os.path.isfile(self.filepath)
+
     def read(self, *args, **kwargs):
         """Read file from disk."""
         return get_filetype(filetype=self.filetype, path=self.filepath).read(*args, **kwargs)
@@ -409,6 +412,34 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         di.pop('foptions', None)
         #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
+
+    def exists(self, return_type='dict'):
+        """
+        Return summary description of which files exist or not.
+
+        Parameters
+        ----------
+        return_type : str, default='dict'
+            If 'dict', return a dictionary mapping exists to the file paths.
+            If 'str', return a string.
+
+        Returns
+        -------
+        summary : dict, str
+        """
+        counts = {True: [], False: []}
+        for ff in self:
+            counts[ff.exists()].append(ff.filepath)
+        if return_type == 'dict':
+            return counts
+        if return_type == 'str':
+            toret = []
+            for exists, filepaths in counts.items():
+                toret.append('exists = {}'.format(exists))
+                toret.append('=' * len(toret[-1]))
+                toret += filepaths
+            return '\n'.join(toret)
+        raise ValueError('Unknown return_type {}'.format(return_type))
 
 
 def get_file_entry(file_entry=None, file_entry_collection=None, **kwargs):
@@ -734,6 +765,36 @@ class FileEntryCollection(BaseClass):
 
     def __repr__(self):
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join([repr(entry) for entry in self.data]))
+
+    def exists(self, return_type='dict'):
+        """
+        Return summary description of which files exist or not.
+
+        Parameters
+        ----------
+        return_type : str, default='dict'
+            If 'dict', return a dictionary mapping exists to the file paths.
+            If 'str', return a string.
+
+        Returns
+        -------
+        summary : dict, str
+        """
+        counts = {True: [], False: []}
+        for entry in self.data:
+            tmp = entry.exists(return_type='dict')
+            for exists in tmp:
+                counts[exists] += tmp[exists]
+        if return_type == 'dict':
+            return counts
+        if return_type == 'str':
+            toret = []
+            for exists, filepaths in counts.items():
+                toret.append('exists = {}'.format(exists))
+                toret.append('=' * len(toret[-1]))
+                toret += filepaths
+            return '\n'.join(toret)
+        raise ValueError('Unknown return_type {}'.format(return_type))
 
 
 class FileManager(FileEntryCollection):

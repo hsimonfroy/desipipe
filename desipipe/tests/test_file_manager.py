@@ -1,5 +1,5 @@
 from desipipe import FileManager
-from desipipe.file_manager import BaseFileEntry
+from desipipe.file_manager import BaseFileEntry, BaseFile
 
 
 class MyFileEntry(BaseFileEntry):
@@ -38,6 +38,11 @@ def test_file_manager():
     for fn in fm.select(filetype='catalog', id=['added_file_2', 'added_file_3']):
         assert 'my_option_and_custom_file_entry' in fn.get(id='added_file_2').filepath
         assert 'my_option_2_and_custom_file_entry' in fn.get(id='added_file_3').filepath
+    print(fm.exists())
+    print(fm.exists(return_type='str'))
+
+    file = BaseFile(path='test.fits')
+    assert file.filepath
 
 
 if __name__ == '__main__':
