@@ -156,8 +156,12 @@ def in_options(values, options, return_index=False):
     toret, index = [], []
     options = list(options)
     for value in values:
-        if type(value) is not type(options[0]):
-            value = type(options[0])(value)
+        try:
+            tval, topt = type(value), type(options[0])
+            if tval is not topt and all(topt is type(opt) for opt in options):
+                value = topt(value)
+        except Exception as exc:
+            raise ValueError('issue with converting {} of type {} to type {} to match options {}'.format(value, tval, topt, options)) from exc
         if value in options:
             ii = options.index(value)
             toret.append(options[ii])
