@@ -224,7 +224,7 @@ class BaseFile(BaseMutableClass):
         def fstr(template, kwargs):
             return eval(f"f'{template}'", kwargs)
 
-        return fstr(path, self.options)
+        return fstr(path, self.foptions)
 
     def exists(self):
         return os.path.isfile(self.filepath)
