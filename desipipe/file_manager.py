@@ -221,10 +221,10 @@ class BaseFile(BaseMutableClass):
             if placeholder_nobrackets in environ:
                 path = path.replace(placeholder, environ[placeholder_nobrackets])
         # return path.format(**self.foptions)
-        def fstr(template, **kwargs):
+        def fstr(template, kwargs):
             return eval(f"f'{template}'", kwargs)
 
-        return fstr(path, **self.options)
+        return fstr(path, self.options)
 
     def exists(self):
         return os.path.isfile(self.filepath)

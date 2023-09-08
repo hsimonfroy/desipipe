@@ -1356,7 +1356,6 @@ def decorator(func):
 
     are equivalent.
     """
-
     def wrapper(self, *args, **kwargs):
         if kwargs or not args:
             if args:
