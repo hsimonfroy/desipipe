@@ -27,7 +27,7 @@ class Config(BaseDict):
         self.user = str(user)
         self.data = {}
 
-        self.config_dir = os.getenv('DESIPIPE_CONFIG_DIR', '')
+        self.config_dir = os.getenv('DESIPIPE_CONFIG_DIR',  '')
         default_config_dir = os.path.join(self.home_dir, '.desipipe')
         if not self.config_dir:
             self.config_dir = default_config_dir
@@ -39,7 +39,7 @@ class Config(BaseDict):
                 with open(self.config_fn, 'a'): pass
             except PermissionError:  # from now on, write to home
                 self.config_dir = default_config_dir
-        self.setdefault('base_queue_dir', os.path.join(self.config_dir, 'queues'))
+        self.setdefault('base_queue_dir', os.getenv('DESIPIPE_QUEUE_DIR', os.path.join(default_config_dir, 'queues')))
 
     @property
     def config_fn(self):

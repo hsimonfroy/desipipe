@@ -1553,7 +1553,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
             break
 
 
-def spawn(queue, timeout=1e4, timestep=1., mode=None, spawn=False):
+def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=False):
     """
     Distribute tasks to workers.
     If all queues are paused, the function terminates.
@@ -1604,6 +1604,8 @@ def spawn(queue, timeout=1e4, timestep=1., mode=None, spawn=False):
                 stop = False
             for manager in queue.managers():
                 if manager.id not in managers:
+                    if max_workers is not None:
+                        manager.scheduler.update(max_workers=max_workers)
                     managers[manager.id] = manager
                 manager = managers[manager.id]  # such that manager.provider keeps track of current processes
                 ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING)
@@ -1612,7 +1614,7 @@ def spawn(queue, timeout=1e4, timestep=1., mode=None, spawn=False):
                     # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
                     manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=ntasks)
         time.sleep(timestep * random.uniform(0.8, 1.2))
-    print('TERMINATED')
+    # print('TERMINATED')
 
 
 def kill(queue=None, provider=None, jobid=None, state=None, **kwargs):
@@ -1793,7 +1795,7 @@ def action_from_args(action='work', args=None):
                     if task.errno is not None:
                         for name in ['jobid', 'errno', 'err', 'out']:
                             logger.info('{}: {}'.format(name, getattr(task, name)))
-                    logger.info('=' * 20)
+                    logger.info('=' * 30)
         return
 
     if action == 'kill':
@@ -1852,9 +1854,10 @@ def action_from_args(action='work', args=None):
 
         parser.add_argument('--timeout', type=float, required=False, default=1e4, help='Stop after this time')
         parser.add_argument('--mode', type=str, required=False, default=None, help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
+        parser.add_argument('--max-workers', type=int, required=False, default=None, help='Maximum number of workers, overrides scheduler max_workers')
         parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process and exit this one')
         args = parser.parse_args(args=args)
-        return spawn(args.queue, timeout=args.timeout, mode=args.mode, spawn=args.spawn)
+        return spawn(args.queue, timeout=args.timeout, mode=args.mode, max_workers=args.max_workers, spawn=args.spawn)
 
     if action == 'retry':
 

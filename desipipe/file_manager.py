@@ -211,7 +211,7 @@ class BaseFile(BaseMutableClass):
     description : str, default=''
         Plain text describing the file(s).
     """
-    _defaults = dict(filetype='', path='', id='', author='', options=dict(), foptions=dict(), description='')
+    _defaults = dict(filetype='generic', path='', id='', author='', options=dict(), foptions=dict(), description='')
 
     @property
     def filepath(self):
@@ -307,7 +307,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         Plain text describing the file(s).
     """
     name = 'base'
-    _defaults = dict(filetype='', path='', id='', author='', options=dict(), foptions=dict(), description='')
+    _defaults = dict(filetype='generic', path='', id='', author='', options=dict(), foptions=dict(), description='')
     _file_cls = BaseFile
 
     def update(self, **kwargs):
@@ -369,7 +369,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         if len(new) == 0:
             raise ValueError('"get" is not applicable as there are no matching entries')
         else:
-            raise ValueError('"get" is not applicable as there are  with multiple options:\n{}'.format(new))
+            raise ValueError('"get" is not applicable as there are multiple options:\n{}'.format(new))
 
     def __len__(self):
         """Length, i.e. number of individual files (looping over all options) described by this file entry."""
@@ -647,14 +647,15 @@ class FileEntryCollection(BaseClass):
         a :class:`ValueError` is raised.
         """
         new = self.select(*args, **kwargs)
-        if len(new) == 1 and len(new[0]) == 1:
+        if len(new.data) == 1 and len(new[0]) == 1:
             for fi in new[0]:
                 return fi  # BaseFile instance
         if prod(len(entry) for entry in new.data) == 0:
             raise ValueError('"get" is not applicable as there are no matching entries')
-        else:
-            raise ValueError('"get" is not applicable as there are {} entries with multiple options:\n{}'.format(len(new.data), '\n'.join([repr(entry) for entry in new.data])))
-
+        if len(new.data) > 1:
+            raise ValueError('"get" is not applicable as there are {} entries:\n{}'.format(len(new.data), '\n'.join([repr(entry) for entry in new.data])))
+        raise ValueError('"get" is not applicable as there 1 entry with multiple options:\n{}'.format('\n'.join([repr(entry) for entry in new.data])))
+            
     def __getitem__(self, index):
         """Return file entry(ies) at the input index(ices) in the list."""
         if utils.is_sequence(index):

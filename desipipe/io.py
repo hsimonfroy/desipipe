@@ -162,4 +162,6 @@ class GenericFile(BaseFile):
 
     def write(self, write, **kwargs):
         """Write."""
+        if hasattr(write, 'save'):
+            write = write.save
         write(self.path, **kwargs)

@@ -213,7 +213,7 @@ class SlurmProvider(BaseProvider):
     def kill(cls, *jobids):
         """Kill input job IDs."""
         for jobid in jobids:
-            subprocess.run(['scancel', '-u', str(jobid)])
+            subprocess.run(['scancel', str(jobid)])
 
     def __call__(self, cmd, workers=1):
         """Submit input command ``cmd`` on ``workers`` workers."""

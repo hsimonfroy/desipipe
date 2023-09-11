@@ -96,8 +96,8 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
         and variables defined in this instance.
         """
         toret = ''
-        if all:
-            toret += sep.join(self.command)
+        if all and self.command:
+            toret += sep.join(self.command) + sep
         toret += sep.join(['export {}={}'.format(name, value) for name, value in self.items()])
         return toret
 
