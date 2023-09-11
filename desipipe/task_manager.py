@@ -1436,6 +1436,7 @@ class TaskManager(BaseClass):
                 setattr(self, name, func(kwargs.pop(name)))
                 if name != 'queue': require_id = True
         if require_id:
+            self.provider.update(environ=self.environ)
             uid = pickle.dumps((self.environ, self.scheduler, self.provider))
             hex = hashlib.md5(uid).hexdigest()
             self.id = str(uuid.UUID(hex=hex))  # unique ID, tied to the given environ, scheduler, provider
