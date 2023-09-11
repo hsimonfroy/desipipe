@@ -1331,6 +1331,7 @@ class BashApp(BaseApp):
         """Run app with input ``args`` and ``kwargs``."""
         errno, result, out, err = 0, None, '', ''
         cmd = self._run(**kwargs)
+        cmd = list(map(str, cmd))
         proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True, shell=False)
         out, err = proc.communicate()
         return errno, result, err, out, {}
