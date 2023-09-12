@@ -230,9 +230,10 @@ class BaseFile(BaseMutableClass):
             placeholder_nobrackets = placeholder[2:-1]
             if placeholder_nobrackets in environ:
                 path = path.replace(placeholder, environ[placeholder_nobrackets])
+
         # return path.format(**self.foptions)
         def fstr(template, kwargs):
-            return eval(f"f'{template}'", kwargs)
+            return eval(f"f'{template}'", dict(), kwargs)
 
         return fstr(path, self.foptions)
 

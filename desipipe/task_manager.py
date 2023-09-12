@@ -366,7 +366,7 @@ class Task(BaseClass):
 
         - call :class:`BaseApp.run`, saving main script where the task is defined and package versions in a folder '.desipipe' located in the directory where files are saved (if any).
         - set :attr:`errno`, :attr:`result`, :attr:`err`, :attr:`out`, :attr:`versions` and :attr:`dtime`.
-        - set :attr:`state`: 'KILLED' if termination signal, 'FAILED' if :class:`BaseApp.run` raised an excpetion, else 'SUCCEEDED'.
+        - set :attr:`state`: 'KILLED' if termination signal, 'FAILED' if :class:`BaseApp.run` raised an exception, else 'SUCCEEDED'.
 
         """
         from .file_manager import BaseFile
@@ -392,8 +392,23 @@ class Task(BaseClass):
                 shutil.copytree(self.app.dirname, dirname, dirs_exist_ok=True)
             return self.app.write_dir  # destination
 
+        self.errno = 42
+        try:
+            # make copy of kwargs to avoid in-place modification and potientially pickling error
+            self_kwargs = TaskUnpickler.loads(TaskPickler.dumps(self.kwargs))
+        except Exception as exc:
+            self.errno = getattr(exc, 'errno', 42)
+            self.err = traceback.format_exc()
+            return
         BaseFile.write_attrs = write_attrs  # save main script and versions whenever a file is written to disk
-        self.errno, self.result, self.err, self.out, self.versions = self.app.run(**{**self.kwargs, **kwargs})
+        self.errno, self.result, self.err, self.out, self.versions = self.app.run(**{**self_kwargs, **kwargs})
+        try:
+            TaskPickler.dumps(self.result)  # to test pickling; the rest should be safe (producted by desipipe)
+        except Exception as exc:
+            self.errno = getattr(exc, 'errno', 42)
+            self.err = traceback.format_exc()
+            return
+
         BaseFile.write_attrs = None
         if self.errno:
             if self.errno == signal.SIGTERM:
@@ -1397,7 +1412,7 @@ class BashApp(BaseApp):
                 errno = proc.poll()
                 if errno is not None: break
                 time.sleep(0.3)
-            return errno, result, err.result(), out.result(), {}
+        return errno, result, err.result(), out.result(), {}
 
 
 def decorator(func):
