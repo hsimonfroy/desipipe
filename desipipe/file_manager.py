@@ -95,6 +95,12 @@ class BaseMutableClass(BaseClass):
     def __eq__(self, other):
         return type(other) == type(self) and all(_deep_eq(getattr(other, name), getattr(self, name)) for name in self._defaults)
 
+    def __getstate__(self):
+        return dict(self.__dict__)
+
+    def __setstate(self, state):
+        self.__dict__.update(state)
+
 
 def _deep_eq(obj1, obj2):
     """(Recursively) test equality between ``obj1`` and ``obj2``."""
@@ -655,7 +661,7 @@ class FileEntryCollection(BaseClass):
         if len(new.data) > 1:
             raise ValueError('"get" is not applicable as there are {} entries:\n{}'.format(len(new.data), '\n'.join([repr(entry) for entry in new.data])))
         raise ValueError('"get" is not applicable as there 1 entry with multiple options:\n{}'.format('\n'.join([repr(entry) for entry in new.data])))
-            
+
     def __getitem__(self, index):
         """Return file entry(ies) at the input index(ices) in the list."""
         if utils.is_sequence(index):

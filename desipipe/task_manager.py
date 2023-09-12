@@ -62,23 +62,23 @@ def reduce_app(self):
 
 def serialize_function(func, remove_decorator=False):
     if not inspect.isfunction(func):
-        raise SerializationError('{} is not a function'.format(func))
+        raise SerializationError('input object is not a function')
     name = func.__name__
     if name.startswith('<') and name.endswith('>'):
-        raise SerializationError('{} has no valuable name, e.g. may be a lambda expression?'.format(func))
+        raise SerializationError('input object has no valuable name, e.g. may be a lambda expression?')
     code = getattr(func, '__desipipecode__', None)
     if code is None:
         try:
             code = inspect.getsource(func)
         except Exception as exc:
-            raise SerializationError('cannot find source code for {}'.format(func)) from exc
+            raise SerializationError('cannot find source code for input object') from exc
     code = textwrap.dedent(code).split('\n')
     if remove_decorator:
         if code[0].startswith('@'):
             code = code[1:]
     code = '\n'.join(code)
     if not code.startswith('def '):
-        raise SerializationError('{} code does not start with def: {}'.format(func, code))
+        raise SerializationError('input object code does not start with def: {}'.format(code))
     _, code = code.split(':', maxsplit=1)
     sig = inspect.signature(func)
     parameters, vartypes, dlocals = [], {}, {}
