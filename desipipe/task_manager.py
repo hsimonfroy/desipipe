@@ -487,6 +487,17 @@ def _make_list(obj, tp=str):
     return tuple(tp(oo) for oo in obj), one
 
 
+def get_mpicomm():
+    mpicomm = None
+    try:
+        from mpi4py import MPI
+    except ImportError:
+        pass
+    else:
+        mpicomm = MPI.COMM_WORLD
+    return mpicomm
+
+
 class Queue(BaseClass):
 
     """Queue keeping track of all tasks that have been run and to be run, with sqlite backend."""
@@ -526,61 +537,67 @@ class Queue(BaseClass):
         self.filename = os.path.abspath(os.path.join(base_dir, name))
         self.dirname = os.path.dirname(self.filename)
 
-        # Check if it already exists and/or if we are supposed to create it
-        exists = os.path.exists(self.filename)
-        if create is None:
-            create = not exists
-        elif create and exists:
-            raise ValueError('Queue {} already exists'.format(name))
-        elif (not create) and (not exists):
-            raise ValueError('Queue {} does not exist'.format(name))
+        mpicomm = get_mpicomm()
+        if mpicomm is None or mpicomm.rank == 0:
+            # Check if it already exists and/or if we are supposed to create it
+            exists = os.path.exists(self.filename)
 
-        # Create directory with rwx for user but no one else
-        if create:
-            self.log_info('Creating queue {}'.format(self.filename))
-            utils.mkdir(self.dirname, mode=0o700)
-            self.db = sqlite3.Connection(self.filename)
+            if create is None:
+                create = not exists
+            elif create and exists:
+                raise ValueError('Queue {} already exists'.format(name))
+            elif (not create) and (not exists):
+                raise ValueError('Queue {} does not exist'.format(name))
 
-            # Give rw access to user but no one else
-            os.chmod(self.filename, 0o600)
+            # Create directory with rwx for user but no one else
+            if create:
+                self.log_info('Creating queue {}'.format(self.filename))
+                utils.mkdir(self.dirname, mode=0o700)
+                self.db = sqlite3.Connection(self.filename)
 
-            # Create tables
-            script = """
-            CREATE TABLE tasks (
-                tid      TEXT PRIMARY KEY,
-                task     TEXT,
-                state    TEXT,
-                mid      TEXT,  -- task manager id
-                jobid    TEXT
-            );
-            -- Dependencies table.  Multiple entries for multiple deps.
-            CREATE TABLE requires (
-                tid      TEXT,     -- task.id foreign key
-                require TEXT,      -- task.id that it depends upon
-            -- Add foreign key constraints
-                FOREIGN KEY(tid) REFERENCES tasks(tid),
-                FOREIGN KEY(require) REFERENCES tasks(tid)
-            );
-            -- Task manager table
-            CREATE TABLE managers (
-                mid    TEXT PRIMARY KEY, -- task manager id foreign key
-                manager TEXT,             -- task manager
-            -- Add foreign key constraints
-                FOREIGN KEY(mid) REFERENCES tasks(mid)
-            );
-            -- Metadata about this queue, e.g. active/paused
-            CREATE TABLE metadata (
-                key   TEXT,
-                value TEXT
-            );
-            """
-            self.db.executescript(script)
-            # Initial queue state is active
-            self.db.execute('INSERT INTO metadata VALUES (?, ?)', ('state', QueueState.ACTIVE))
-            self.db.commit()
-        else:
-            self.log_debug('Connection to queue {}'.format(self.filename))
-            self.db = sqlite3.Connection(self.filename, timeout=60)
+                # Give rw access to user but no one else
+                os.chmod(self.filename, 0o600)
+
+                # Create tables
+                script = """
+                CREATE TABLE tasks (
+                    tid      TEXT PRIMARY KEY,
+                    task     TEXT,
+                    state    TEXT,
+                    mid      TEXT,  -- task manager id
+                    jobid    TEXT
+                );
+                -- Dependencies table.  Multiple entries for multiple deps.
+                CREATE TABLE requires (
+                    tid      TEXT,     -- task.id foreign key
+                    require TEXT,      -- task.id that it depends upon
+                -- Add foreign key constraints
+                    FOREIGN KEY(tid) REFERENCES tasks(tid),
+                    FOREIGN KEY(require) REFERENCES tasks(tid)
+                );
+                -- Task manager table
+                CREATE TABLE managers (
+                    mid    TEXT PRIMARY KEY, -- task manager id foreign key
+                    manager TEXT,             -- task manager
+                -- Add foreign key constraints
+                    FOREIGN KEY(mid) REFERENCES tasks(mid)
+                );
+                -- Metadata about this queue, e.g. active/paused
+                CREATE TABLE metadata (
+                    key   TEXT,
+                    value TEXT
+                );
+                """
+                self.db.executescript(script)
+                # Initial queue state is active
+                self.db.execute('INSERT INTO metadata VALUES (?, ?)', ('state', QueueState.ACTIVE))
+                self.db.commit()
+                self.db.close()
+        if mpicomm is not None:
+            mpicomm.barrier()
+
+        self.log_debug('Connection to queue {}'.format(self.filename))
+        self.db = sqlite3.Connection(self.filename, timeout=60)
 
     def _query(self, query, timeout=120., timestep=1., many=False):
         """
@@ -843,10 +860,14 @@ class Queue(BaseClass):
         if hasattr(self, 'db'):
             self.db.close()
             del self.db
-        try:
-            os.remove(self.filename)
-        except OSError:
-            pass
+        mpicomm = get_mpicomm()
+        if mpicomm is None or mpicomm.rank == 0:
+            try:
+                os.remove(self.filename)
+            except OSError:
+                pass
+        if mpicomm is not None:
+            mpicomm.barrier()
 
     def clear(self):
         """Clear queue: delete and recreate."""
@@ -1350,7 +1371,7 @@ def stream(stdout, stderr, stdout_handler=print, stderr_handler=print):
             err = pool.submit(my_stderr_handler, stderr)
             yield out, err
     finally:
-        pass#
+        pass
 
 
 class BashApp(BaseApp):
@@ -1544,8 +1565,17 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     mpisplits : int, default=None
         Split MPI communicator in this number of subcommunicators to run ``mpisplits`` tasks in parallel.
     """
+    try:
+        from mpi4py import MPI
+    except ImportError:
+        MPI = mpicomm = None
+    else:
+        if mpicomm is None:
+            mpicomm = MPI.COMM_WORLD
+    mpicomm_bak = mpicomm
+
     def exit_killed(signal_number, stack_frame):
-        MPI.COMM_WORLD = mpicomm_bak
+        if MPI is not None: MPI.COMM_WORLD = mpicomm_bak
         task.state = TaskState.KILLED
         if itask < 1 or signal_number == signal.SIGINT:
             task.state = TaskState.KILLED
@@ -1560,16 +1590,15 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     signal.signal(signal.SIGINT, exit_killed)
     signal.signal(signal.SIGTERM, exit_killed)
 
-    if mpicomm is None:
-        from mpi4py import MPI
-        mpicomm_bak = mpicomm = MPI.COMM_WORLD
     if mpisplits is not None:
+        if mpicomm is None:
+            raise ImportError('mpicomm not defined')
         for isplit in range(mpisplits):
             if (mpicomm.size * isplit // mpisplits) <= mpicomm.rank < (mpicomm.size * (isplit + 1) // mpisplits):
                 color = isplit
         mpicomm = mpicomm.Split(color, 0)
+        MPI.COMM_WORLD = mpicomm  # a bit hacky
 
-    MPI.COMM_WORLD = mpicomm  # a bit hacky
     jobid = None
     if provider is not None:
         provider = get_provider(provider)
@@ -1577,18 +1606,20 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     while True:
         task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
-        if mpicomm.rank == 0:
+        if mpicomm is None or mpicomm.rank == 0:
             task = queue.pop(mid=mid, tid=tid, name=name, jobid=jobid)
             task = TaskPickler.dumps(task, reduce_app=None)
-        task = TaskUnpickler.loads(mpicomm.bcast(task, root=0))
+        if mpicomm is not None:
+            task = mpicomm.bcast(task, root=0)
+        task = TaskUnpickler.loads(task)
         if task is None:
             break
         kwargs = {}
         if task.kwargs.get('mpicomm', False) is None:
             kwargs['mpicomm'] = mpicomm
         task.run(**kwargs)
-        mpicomm.barrier()
-        if mpicomm.rank == 0:
+        if mpicomm is not None: mpicomm.barrier()
+        if mpicomm is None or mpicomm.rank == 0:
             queue.add(task, replace=True)
         itask += 1
         if mode == 'stop_at_error' and task.state == TaskState.FAILED:
