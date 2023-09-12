@@ -1593,6 +1593,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         itask += 1
         if mode == 'stop_at_error' and task.state == TaskState.FAILED:
             break
+    exit()
 
 
 def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=False):
