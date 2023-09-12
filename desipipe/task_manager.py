@@ -690,7 +690,7 @@ class Queue(BaseClass):
         isscalar = isinstance(tasks, Task)
         if isscalar:
             tasks = [tasks]
-        ids, requires, managers, states, tasks_serialized, futures = [], [], [], [], [], []
+        ids, requires, managers, states, tasks_serialized, jobids, futures = [], [], [], [], [], [], []
         self._get_lock()
         for task in tasks:
             futures.append(Future(queue=self, tid=task.id))
@@ -708,10 +708,11 @@ class Queue(BaseClass):
             managers.append(manager)
             states.append(task.state)
             tasks_serialized.append(TaskPickler.dumps(task))
+            jobids.append(task.jobid)
         query = 'INSERT'
         if replace: query = 'REPLACE'
-        query += ' INTO tasks (tid, task, state, mid) VALUES (?,?,?,?)'
-        self._query([query, zip(ids, tasks_serialized, states, [tm.id for tm in managers])], many=True)
+        query += ' INTO tasks (tid, task, state, mid, jobid) VALUES (?,?,?,?,?)'
+        self._query([query, zip(ids, tasks_serialized, states, [tm.id for tm in managers], jobids)], many=True)
         for tid, requires in zip(ids, requires):
             self._add_requires(tid, requires)
         for manager in managers:
@@ -1265,8 +1266,6 @@ def select_modules(modules):
 
 _modules = select_modules(sys.modules)
 
-_sout, _serr = io.StringIO(), io.StringIO()
-
 
 class PythonApp(BaseApp):
     """
@@ -1290,20 +1289,30 @@ class PythonApp(BaseApp):
                 stream.seek(0)
                 stream.truncate(0)
 
-        # we shall use previous streams, as they may have been imported already
-        clear(_sout, _serr)
-        with contextlib.redirect_stdout(_sout), contextlib.redirect_stderr(_serr):
+        class Logger(object):
+
+            def __init__(self, stream):
+                self._stream = stream
+                self._log = io.StringIO()
+
+            def write(self, message):
+                self._stream.write(message)
+                self._log.write(message)
+
+            def result(self):
+                return self._log.getvalue()
+
+        sout, serr = Logger(sys.stdout), Logger(sys.stderr)
+        with contextlib.redirect_stdout(sout), contextlib.redirect_stderr(serr):
             try:
                 result = self._run(**kwargs)
             except Exception as exc:
                 errno = getattr(exc, 'errno', 42)
-                traceback.print_exc(file=_serr)
+                traceback.print_exc(file=serr)
                 # raise exc
             versions = self.versions()
-            out, err = _sout.getvalue(), _serr.getvalue()
-        clear(_sout, _serr)
 
-        return errno, result, err, out, versions
+        return errno, result, serr.result(), sout.result(), versions
 
     def versions(self):
         """Return module versions."""
@@ -1314,6 +1323,34 @@ class PythonApp(BaseApp):
             except (KeyError, AttributeError):
                 pass
         return versions
+
+
+@contextlib.contextmanager
+def stream(stdout, stderr, stdout_handler=print, stderr_handler=print):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def my_stdout_handler(stdout):
+        lines = []
+        for line in stdout:
+            lines.append(line)
+            stdout_handler(line[:-1])
+        return ''.join(lines)
+
+    def my_stderr_handler(stderr):
+        lines = []
+        for line in stderr:
+            lines.append(line)
+            stderr_handler(line[:-1])
+        return ''.join(lines)
+
+    """Stream the output and error in real time."""
+    try:
+        with ThreadPoolExecutor(2) as pool:  # two threads to handle the streams
+            out = pool.submit(my_stdout_handler, stdout)
+            err = pool.submit(my_stderr_handler, stderr)
+            yield out, err
+    finally:
+        pass#
 
 
 class BashApp(BaseApp):
@@ -1332,9 +1369,14 @@ class BashApp(BaseApp):
         errno, result, out, err = 0, None, '', ''
         cmd = self._run(**kwargs)
         cmd = list(map(str, cmd))
+        os.environ['PYTHONUNBUFFERED'] = '1'
         proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True, shell=False)
-        out, err = proc.communicate()
-        return errno, result, err, out, {}
+        with stream(proc.stdout, proc.stderr) as (out, err):
+            while True:
+                errno = proc.poll()
+                if errno is not None: break
+                time.sleep(0.3)
+            return errno, result, err.result(), out.result(), {}
 
 
 def decorator(func):
@@ -1546,8 +1588,6 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
             kwargs['mpicomm'] = mpicomm
         task.run(**kwargs)
         mpicomm.barrier()
-        # print(task.out)
-        # task.update(jobid=environ.get('DESIPIPE_JOBID', ''))
         if mpicomm.rank == 0:
             queue.add(task, replace=True)
         itask += 1
