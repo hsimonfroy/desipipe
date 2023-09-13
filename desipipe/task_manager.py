@@ -1305,6 +1305,7 @@ def select_modules(modules):
 
 
 _modules = select_modules(sys.modules)
+_sout, _serr = io.StringIO(), io.StringIO()
 
 
 class PythonApp(BaseApp):
@@ -1331,9 +1332,9 @@ class PythonApp(BaseApp):
 
         class Logger(object):
 
-            def __init__(self, stream, callback=None):
+            def __init__(self, stream, logger, callback=None):
                 self._stream = stream
-                self._log = io.StringIO()
+                self._log = logger
                 self.callback = callback
 
             def write(self, message):
@@ -1345,10 +1346,14 @@ class PythonApp(BaseApp):
             def result(self):
                 return self._log.getvalue()
 
-            def __del__(self):
-                self._log.close()
+        def clear(*streams):
+            for stream in streams:
+                stream.seek(0)
+                stream.truncate(0)
 
-        sout, serr = Logger(sys.stdout, callback=callback), Logger(sys.stderr)
+        # We shall use previous streams, as they may have been imported already by e.g. the logger
+        clear(_sout, _serr)
+        sout, serr = Logger(sys.stdout, _sout, callback=callback), Logger(sys.stderr, _serr)
         with contextlib.redirect_stdout(sout), contextlib.redirect_stderr(serr):
             try:
                 result = self._run(**kwargs)
@@ -1357,8 +1362,9 @@ class PythonApp(BaseApp):
                 traceback.print_exc(file=serr)
                 # raise exc
             versions = self.versions()
-
-        return errno, result, serr.result(), sout.result(), versions
+        err, out = serr.result(), sout.result()
+        clear(_sout, _serr)
+        return errno, result, err, out, versions
 
     def versions(self):
         """Return module versions."""
