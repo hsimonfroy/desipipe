@@ -131,7 +131,6 @@ class TaskPickler(pickle.Pickler):
             ids.append(obj.id)
             setattr(self, 'future_ids', ids)
             return ('Future', obj.id)
-
         try:
             name, code, vartypes, dlocals = serialize_function(obj)
         except SerializationError:
@@ -401,14 +400,19 @@ class Task(BaseClass):
             self.err = traceback.format_exc()
             return
         BaseFile.write_attrs = write_attrs  # save main script and versions whenever a file is written to disk
+        if hasattr(self, 'callback'):
+            self.app.callback = self.callback
         self.errno, self.result, self.err, self.out, self.versions = self.app.run(**{**self_kwargs, **kwargs})
+        try:
+            del self.app.callback
+        except AttributeError:  # may have been deleted by callback in work()
+            pass
         try:
             TaskPickler.dumps(self.result)  # to test pickling; the rest should be safe (producted by desipipe)
         except Exception as exc:
             self.errno = getattr(exc, 'errno', 42)
             self.err = traceback.format_exc()
             return
-
         BaseFile.write_attrs = None
         if self.errno:
             if self.errno == signal.SIGTERM:
@@ -1272,7 +1276,7 @@ class BaseApp(BaseClass):
         self.func = deserialize_function(self.name, self.code, self.dlocals)
 
     def run(self, **kwargs):
-        """Run app with input ``args`` and ``kwargs``."""
+        """Run app with input ``kwargs``."""
         raise NotImplementedError
 
     def _run(self, **kwargs):
@@ -1320,25 +1324,31 @@ class PythonApp(BaseApp):
         if self.dirname not in sys.path:
             sys.path.insert(0, self.dirname)
 
-        def clear(*streams):
-            for stream in streams:
-                stream.seek(0)
-                stream.truncate(0)
+        def callback():
+            callback = getattr(self, 'callback', None)
+            if callback is not None:
+                callback(sout.result(), serr.result())
 
         class Logger(object):
 
-            def __init__(self, stream):
+            def __init__(self, stream, callback=None):
                 self._stream = stream
                 self._log = io.StringIO()
+                self.callback = callback
 
             def write(self, message):
                 self._stream.write(message)
                 self._log.write(message)
+                if self.callback is not None:
+                    self.callback()
 
             def result(self):
                 return self._log.getvalue()
 
-        sout, serr = Logger(sys.stdout), Logger(sys.stderr)
+            def __del__(self):
+                self._log.close()
+
+        sout, serr = Logger(sys.stdout, callback=callback), Logger(sys.stderr)
         with contextlib.redirect_stdout(sout), contextlib.redirect_stderr(serr):
             try:
                 result = self._run(**kwargs)
@@ -1361,34 +1371,6 @@ class PythonApp(BaseApp):
         return versions
 
 
-@contextlib.contextmanager
-def stream(stdout, stderr, stdout_handler=print, stderr_handler=print):
-    from concurrent.futures import ThreadPoolExecutor
-
-    def my_stdout_handler(stdout):
-        lines = []
-        for line in stdout:
-            lines.append(line)
-            stdout_handler(line[:-1])
-        return ''.join(lines)
-
-    def my_stderr_handler(stderr):
-        lines = []
-        for line in stderr:
-            lines.append(line)
-            stderr_handler(line[:-1])
-        return ''.join(lines)
-
-    """Stream the output and error in real time."""
-    try:
-        with ThreadPoolExecutor(2) as pool:  # two threads to handle the streams
-            out = pool.submit(my_stdout_handler, stdout)
-            err = pool.submit(my_stderr_handler, stderr)
-            yield out, err
-    finally:
-        pass
-
-
 class BashApp(BaseApp):
     """
     Bash application, e.g.:
@@ -1406,13 +1388,27 @@ class BashApp(BaseApp):
         cmd = self._run(**kwargs)
         cmd = list(map(str, cmd))
         os.environ['PYTHONUNBUFFERED'] = '1'
+
+        callback = getattr(self, 'callback', None)
+
         proc = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True, shell=False)
-        with stream(proc.stdout, proc.stderr) as (out, err):
-            while True:
-                errno = proc.poll()
-                if errno is not None: break
-                time.sleep(0.3)
-        return errno, result, err.result(), out.result(), {}
+        out, err = '', ''
+        # We could have created a ThreadPoolExecutor(2) to get out and err at the same time
+        # but we wouldn't have been able to write task.out and err in the queue live from a thread
+        # Here out will be written first, then err; which is fine in most cases
+        for line in proc.stdout:
+            print(line[:-1])
+            out += line
+            if callback is not None:
+                callback(out, '')
+        for line in proc.stderr:
+            print(line[:-1])
+            err += line
+        while True:
+            errno = proc.poll()
+            if errno is not None: break
+            time.sleep(1.)
+        return errno, result, err, out, {}
 
 
 def decorator(func):
@@ -1614,6 +1610,16 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         mpicomm = mpicomm.Split(color, 0)
         MPI.COMM_WORLD = mpicomm  # a bit hacky
 
+    global t0
+    timestep = 2.
+
+    def callback(out, err):
+        global t0
+        if (mpicomm is None or mpicomm.rank == 0) and time.time() - t0 > timestep:
+            task.out, task.err = out, err
+            queue.add(task, replace=True)
+            t0 = time.time()
+
     jobid = None
     if provider is not None:
         provider = get_provider(provider)
@@ -1626,12 +1632,15 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
             task = TaskPickler.dumps(task, reduce_app=None)
         if mpicomm is not None:
             task = mpicomm.bcast(task, root=0)
+        #task_in = TaskUnpickler.loads(task)
         task = TaskUnpickler.loads(task)
         if task is None:
             break
         kwargs = {}
         if task.kwargs.get('mpicomm', False) is None:
             kwargs['mpicomm'] = mpicomm
+        task.callback = callback
+        t0 = time.time() - timestep # for callback
         task.run(**kwargs)
         if mpicomm is not None: mpicomm.barrier()
         if mpicomm is None or mpicomm.rank == 0:
