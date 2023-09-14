@@ -115,6 +115,7 @@ def _deep_eq(obj1, obj2):
             return obj2 == obj1
     return False
 
+
 def _make_list(values):
     """Turn input ``values`` (single value, list, iterator, etc.) into a list."""
     if isinstance(values, range):
@@ -177,7 +178,7 @@ def in_options(values, options, return_index=False):
     return toret
 
 
-def iter_options(options, include=None, exclude=None):
+def iter_options(options, include=None, exclude=None, yield_index=False):
     if include is None:
         include = list(options.keys())
     if exclude is None:
@@ -185,11 +186,14 @@ def iter_options(options, include=None, exclude=None):
     include, exclude = _make_list(include), _make_list(exclude)
     include = [name for name in options if name in include and not name in exclude]
 
-    for values in itertools.product(*[[Ellipsis] if options[name] is Ellipsis else options[name] for name in include]):
+    for ivalues in itertools.product(*([Ellipsis] if options[name] is Ellipsis else range(len(options[name])) for name in include)):
         opt = dict(options)
         for iname, name in enumerate(include):
-            opt[name] = Ellipsis if options[name] is Ellipsis else [values[iname]]
-        yield opt
+            opt[name] = Ellipsis if options[name] is Ellipsis else options[name][ivalues[iname]]
+        if yield_index:
+            yield opt, ivalues
+        else:
+            yield opt
 
 
 class BaseFile(BaseMutableClass):
@@ -344,7 +348,12 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         >>> entry.select(region=['NGC'])
 
         returns a new entry, with option 'region' taking values in ``['NGC']``.
-        Pass 'ignore' to ignore unknown options.
+
+        Parameters
+        ----------
+        ignore : bool, list, default=False
+            If ``True``, ignore input options that are not in these entry's options.
+            If list, do not apply a filter for these input options.
         """
         def eq(test, ref):
             if type(test) is not type(ref):
@@ -353,7 +362,9 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
             return test == ref
 
         options, foptions = self.options.copy(), self.foptions.copy()
+        if not ignore in [False, True]: ignore = _make_list(ignore)
         for name, values in kwargs.items():
+            if isinstance(ignore, list) and name in ignore: continue
             if name in options:
                 options[name], indices = in_options(values, options[name], return_index=True)
                 if indices is Ellipsis:  # Ellipsis
@@ -396,17 +407,59 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         fi.options, fi.foptions = options, foptions
         return fi
 
+    def iter_options(self, include=None, exclude=None):
+        """
+        Iterate over options.
+
+        Parameters
+        ----------
+        include : str, list, default=None
+            List of options to include in the iteration.
+            ``None`` to include all options.
+
+        exclude : str, list, default=None
+            List of options to exclude in the iteration.
+            ``None`` to not exclude any option.
+
+        Returns
+        -------
+        options : list of the options.
+        """
+        return [options for options in iter_options(self.options, include=include, exclude=exclude)]
+
+    def iter(self, include=None, exclude=None):
+        """
+        Iterate over options and return the corresponding list of files.
+
+        Parameters
+        ----------
+        include : str, list, default=None
+            List of options to include in the iteration.
+            ``None`` to include all options.
+
+        exclude : str, list, default=None
+            List of options to exclude in the iteration.
+            ``None`` to not exclude any option.
+
+        Returns
+        -------
+        files : list of files.
+        """
+        files = []
+        for options, index in iter_options(self.options, include=include, exclude=exclude, yield_index=True):
+            foptions = {}
+            for iname, name in enumerate(options):
+                if options[name] is Ellipsis:
+                    foptions[name] = self.foptions[name]
+                else:
+                    foptions[name] = self.foptions[name][index[iname]]
+            files.append(self._get_file(options, foptions=foptions))
+        return files
+
     def __iter__(self):
         """Iterate over all files (looping over all options) described by this file entry."""
-        for ivalues in itertools.product(*([Ellipsis] if values is Ellipsis else range(len(values)) for values in self.options.values())):
-            options, foptions = {}, {}
-            for iname, name in enumerate(self.options):
-                ivalue = ivalues[iname]
-                if self.options[name] is Ellipsis:
-                    options[name], foptions[name] = self.options[name], self.foptions[name]
-                else:
-                    options[name], foptions[name] = self.options[name][ivalue], self.foptions[name][ivalue]
-            yield self._get_file(options, foptions=foptions)
+        for file in self.iter(include=None, exclude=None):
+            yield file
 
     @property
     def filepath(self):
@@ -637,7 +690,10 @@ class FileEntryCollection(BaseClass):
 
         **kwargs : dict
             Restrict to these options, see :meth:`BaseFileEntry.select`.
-            Pass 'ignore' for each file entry to consider only its options.
+
+        ignore : bool, list, default=False
+            If ``True``, also keep file entries that do not take the input options.
+            If list, do not cut file entries to these input options.
 
         Returns
         -------
@@ -811,6 +867,27 @@ class FileEntryCollection(BaseClass):
         raise ValueError('Unknown return_type {}'.format(return_type))
 
 
+def common_options(list_options, intersection=True):
+    """Return the common options."""
+    coptions = dict(list_options[0])
+
+    def _intersect(options1, options2):
+        options = {}
+        for name, values1 in options1.items():
+            if name in options2:
+                options[name] = in_options(values1, options2[name])
+            elif not intersection:
+                options[name] = values1
+        if not intersection:
+            for name, values2 in options2.items():
+                options.setdefault(name, values2)
+        return options
+
+    for options2 in list_options:
+        coptions = _intersect(coptions, options2)
+    return coptions
+
+
 class FileManager(FileEntryCollection):
 
     """BaseFile manager, main class to be used to get paths to / read / write files."""
@@ -834,20 +911,34 @@ class FileManager(FileEntryCollection):
         if not self.data:
             return {}
 
-        options = dict(self.data[0].options)
+        return common_options([entry.options for entry in self.data], intersection=True)
 
-        def _intersect(options1, options2):
-            options = {}
-            for name, values1 in options1.items():
-                if name in options2:
-                    options[name] = in_options(values1, options2[name])
-            return options
+    def iter_options(self, include=None, exclude=None, intersection=False):
+        """
+        Iterate over options that are common to all file entries (:attr:`options`).
 
-        for entry in self.data:
-            options = _intersect(options, entry.options)
-        return options
+        Parameters
+        ----------
+        include : str, list, default=None
+            List of options to include in the iteration.
+            ``None`` to include all options.
 
-    def iter(self, include=None, exclude=None, get=None):
+        exclude : str, list, default=None
+            List of options to exclude in the iteration.
+            ``None`` to not exclude any option.
+
+        intersection : bool, default=True
+            If ``False``, iterate over all file entry options,
+            i.e. not only those which are common to all file entries.
+
+        Returns
+        -------
+        options : list of the options.
+        """
+        options = common_options([entry.options for entry in self.data], intersection=intersection)
+        return [options for options in iter_options(options, include=include, exclude=exclude)]
+
+    def iter(self, include=None, exclude=None, get=None, intersection=True):
         """
         Iterate over options that are common to all file entries (:attr:`options`),
         and return the list of the (selected) :class:`FileManager` instances.
@@ -868,17 +959,21 @@ class FileManager(FileEntryCollection):
             If ``None``, and there are single options in :class:`FileManager` instances,
             call :meth:`FileManager.get` to return a list of :class:`BaseFile` instances.
 
+        intersection : bool, default=True
+            If ``False``, iterate over all file entry options,
+            i.e. not only those which are common to all file entries.
+
         Returns
         -------
-        fms : list of the (selected) :class:`FileManager` instances.
+        fms : list of the :class:`FileManager` instances.
         """
         if not self.data:
             return []
         fms = []
-        for options in iter_options(self.options, include=include, exclude=exclude):
+        for options in self.iter_options(include=include, exclude=exclude, intersection=intersection):
             fm = self.clone(data=[])
             for entry in self.data:
-                entry = entry.select(**{**entry.options, **options})
+                entry = entry.select(ignore=not intersection, **{**entry.options, **options})
                 fm.append(entry)
             fms.append(fm)
         if get is False:
@@ -902,7 +997,7 @@ class FileManager(FileEntryCollection):
         Iterate over options that are common to all file entries (:attr:`options`),
         and yield the (selected) :class:`FileManager` instances.
         """
-        for fm in self.iter(include=None, exclude=None, get=None):
+        for fm in self.iter(include=None, exclude=None, get=None, intersection=True):
             yield fm
 
     @classmethod
