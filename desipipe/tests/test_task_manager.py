@@ -48,12 +48,7 @@ def test_queue(spawn=True, run=False):
     tm = TaskManager(queue, environ=dict(), scheduler=dict(max_workers=2), provider=provider)
     tm2 = tm.clone(scheduler=dict(max_workers=1), provider=dict(provider='local'))
 
-    def common1(size):
-        import time
-        import numpy as np
-        time.sleep(3)
-        x, y = np.random.uniform(-1, 1, size), np.random.uniform(-1, 1, size)
-        return np.sum((x**2 + y**2) < 1.) * 1. / size
+    from test_def import common1
 
     def common2(size=10000, co=common1):
         return co(size=size)
@@ -176,7 +171,7 @@ def test_file(spawn=True):
     for fi in fm:
         results.append(copy(fi.get(id='input'), fi.get(id='output')))
 
-    if spawn:
+    if tospawn:
         from desipipe import spawn
         spawn(queue)
         for res in results:
@@ -186,10 +181,21 @@ def test_file(spawn=True):
     queue.delete()
 
 
+def test_mpi():
+
+    from desipipe import setup_logging, spawn
+    setup_logging()
+
+    queue = Queue('test3', base_dir=base_dir)
+    provider = dict(provider='local')
+    tm = TaskManager(queue, environ=dict(), scheduler=dict(max_workers=2), provider=provider)
+
+
 if __name__ == '__main__':
 
     #test_serialization()
     #test_app()
-    #test_queue(spawn=True, run=False)
+    test_queue(spawn=True, run=False)
     #test_cmdline()
-    test_file(spawn=True)
+    #test_file(spawn=True)
+    #test_mpi()

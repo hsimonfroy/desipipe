@@ -1305,7 +1305,36 @@ def select_modules(modules):
 
 
 _modules = select_modules(sys.modules)
-_sout, _serr = io.StringIO(), io.StringIO()
+
+
+class MyStream(object):
+
+    def __init__(self, stream, callback=None):
+        self._stream = stream
+        self._log = io.StringIO()
+        self.callback = callback
+
+    def write(self, message):
+        self._stream.write(message)
+        self._log.write(message)
+        if self.callback is not None:
+            self.callback()
+
+    def result(self, clear=False):
+        toret = self._log.getvalue()
+        if clear: self.clear()
+        return toret
+
+    def clear(self):
+        self._log.seek(0)
+        self._log.truncate(0)
+
+    def __del__(self):
+        pass
+        #self._log.close()
+
+
+_sout, _serr = MyStream(sys.stdout), MyStream(sys.stderr)
 
 
 class PythonApp(BaseApp):
@@ -1328,42 +1357,20 @@ class PythonApp(BaseApp):
         def callback():
             callback = getattr(self, 'callback', None)
             if callback is not None:
-                callback(sout.result(), serr.result())
+                callback(_sout.result(), _serr.result())
 
-        class Logger(object):
-
-            def __init__(self, stream, logger, callback=None):
-                self._stream = stream
-                self._log = logger
-                self.callback = callback
-
-            def write(self, message):
-                self._stream.write(message)
-                self._log.write(message)
-                if self.callback is not None:
-                    self.callback()
-
-            def result(self):
-                return self._log.getvalue()
-
-        def clear(*streams):
-            for stream in streams:
-                stream.seek(0)
-                stream.truncate(0)
-
+        _sout.clear(), _serr.clear()
+        _sout.callback = callback
         # We shall use previous streams, as they may have been imported already by e.g. the logger
-        clear(_sout, _serr)
-        sout, serr = Logger(sys.stdout, _sout, callback=callback), Logger(sys.stderr, _serr)
-        with contextlib.redirect_stdout(sout), contextlib.redirect_stderr(serr):
+        with contextlib.redirect_stdout(_sout), contextlib.redirect_stderr(_serr):
             try:
                 result = self._run(**kwargs)
             except Exception as exc:
                 errno = getattr(exc, 'errno', 42)
-                traceback.print_exc(file=serr)
+                traceback.print_exc(file=_serr)
                 # raise exc
             versions = self.versions()
-        err, out = serr.result(), sout.result()
-        clear(_sout, _serr)
+        err, out = _serr.result(clear=True), _sout.result(clear=True)
         return errno, result, err, out, versions
 
     def versions(self):
