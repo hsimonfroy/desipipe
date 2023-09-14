@@ -22,6 +22,7 @@ def bash_env(cmd):
     """Run input command in a subprocess and collect environment variables."""
     import subprocess
     environ = {}
+    if isinstance(cmd, (tuple, list)): cmd = ' && '.join(cmd)
     result = subprocess.run(['bash', '-c', '{} && env'.format(cmd)], capture_output=True, text=True)
     for line in result.stdout.split('\n'):
         try:
