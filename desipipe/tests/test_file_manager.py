@@ -22,6 +22,8 @@ def test_file_manager():
     for fn in fmp:
         assert fn == fn
         print(fn, fn.get(option='my_option').filepath)
+    assert len(fm.select(zrange=[1., 1.2])) == 2
+    assert len(fm.select(zrange=[1., 1.2], ignore=True)) == len(fm)
     for fn in fm.select(filetype='catalog'):
         assert fn == fn
         print(fn.filepath)

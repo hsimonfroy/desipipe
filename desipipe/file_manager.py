@@ -337,13 +337,14 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         for name, values in self.options.items():
             self.foptions.setdefault(name, values)
 
-    def select(self, **kwargs):
+    def select(self, ignore=False, **kwargs):
         """
         Restrict to input options, e.g.
 
         >>> entry.select(region=['NGC'])
 
         returns a new entry, with option 'region' taking values in ``['NGC']``.
+        Pass 'ignore' to ignore unknown options.
         """
         def eq(test, ref):
             if type(test) is not type(ref):
@@ -359,7 +360,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                     foptions[name] = options[name]
                 else:
                     foptions[name] = [foptions[name][index] for index in indices]
-            else:
+            elif not ignore:
                 raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
         return self.clone(options=options, foptions=foptions)
 
@@ -636,6 +637,7 @@ class FileEntryCollection(BaseClass):
 
         **kwargs : dict
             Restrict to these options, see :meth:`BaseFileEntry.select`.
+            Pass 'ignore' for each file entry to consider only its options.
 
         Returns
         -------
