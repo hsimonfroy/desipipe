@@ -426,7 +426,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         -------
         options : list of the options.
         """
-        return [options for options in iter_options(self.options, include=include, exclude=exclude)]
+        return list(iter_options(self.options, include=include, exclude=exclude))
 
     def iter(self, include=None, exclude=None):
         """
@@ -874,14 +874,18 @@ def common_options(list_options, intersection=True):
 
     def _intersect(options1, options2):
         options = {}
-        for name, values1 in options1.items():
-            if name in options2:
-                options[name] = in_options(values1, options2[name])
-            elif not intersection:
-                options[name] = values1
-        if not intersection:
+        if intersection:
+            for name, values1 in options1.items():
+                if name in options2:
+                    options[name] = in_options(values1, options2[name])
+        else:
+            options = dict(options1)
             for name, values2 in options2.items():
-                options.setdefault(name, values2)
+                if name in options1:
+                    values1 = options1[name]
+                    options[name] = values1 + [value for value in values2 if value not in values1]
+                else:
+                    options[name] = values2
         return options
 
     for options2 in list_options:
@@ -914,7 +918,7 @@ class FileManager(FileEntryCollection):
 
         return common_options([entry.options for entry in self.data], intersection=True)
 
-    def iter_options(self, include=None, exclude=None, intersection=False):
+    def iter_options(self, include=None, exclude=None, intersection=True):
         """
         Iterate over options that are common to all file entries (:attr:`options`).
 
@@ -936,8 +940,13 @@ class FileManager(FileEntryCollection):
         -------
         options : list of the options.
         """
-        options = common_options([entry.options for entry in self.data], intersection=intersection)
-        return [options for options in iter_options(options, include=include, exclude=exclude)]
+        if not intersection:
+            toret = []
+            for entry in self.data:
+                toret += entry.iter_options(include=include, exclude=exclude)
+            return toret
+        options = common_options([entry.options for entry in self.data], intersection=True)
+        return list(iter_options(options, include=include, exclude=exclude))
 
     def iter(self, include=None, exclude=None, get=None, intersection=True):
         """
