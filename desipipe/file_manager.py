@@ -142,6 +142,7 @@ def in_options(values, options, return_index=False):
         if hasattr(opt, '__iter__') and not isinstance(opt, str):
             for opt in opt:
                 return 1 + get_ndim(opt)
+            return 1
         return 0
 
     if values is Ellipsis:
@@ -720,7 +721,7 @@ class FileEntryCollection(BaseClass):
             raise ValueError('"get" is not applicable as there are no matching entries')
         if len(new.data) > 1:
             raise ValueError('"get" is not applicable as there are {} entries:\n{}'.format(len(new.data), '\n'.join([repr(entry) for entry in new.data])))
-        raise ValueError('"get" is not applicable as there 1 entry with multiple options:\n{}'.format('\n'.join([repr(entry) for entry in new.data])))
+        raise ValueError('"get" is not applicable as there is 1 entry with multiple options:\n{}'.format('\n'.join([repr(entry) for entry in new.data])))
 
     def __getitem__(self, index):
         """Return file entry(ies) at the input index(ices) in the list."""
@@ -883,7 +884,7 @@ def common_options(list_options, intersection=True):
             for name, values2 in options2.items():
                 if name in options1:
                     values1 = options1[name]
-                    options[name] = values1 + [value for value in values2 if value not in values1]
+                    options[name] = values1 + [value for value in values2 if not in_options(value, values1)]
                 else:
                     options[name] = values2
         return options
@@ -941,12 +942,22 @@ class FileManager(FileEntryCollection):
         options : list of the options.
         """
         if not intersection:
-            toret = []
+            common = []
             for entry in self.data:
-                toret += entry.iter_options(include=include, exclude=exclude)
-            return toret
-        options = common_options([entry.options for entry in self.data], intersection=True)
-        return list(iter_options(options, include=include, exclude=exclude))
+                for options2 in entry.iter_options(include=include, exclude=exclude):
+                    added = False
+                    for i1, options1 in enumerate(common):
+                        if set(options1).issubset(set(options2)):  # options1 in options
+                            if all(in_options(options1[name], [options2[name]]) for name in options1):
+                                added = True
+                                common[i1] = options2
+                        elif set(options2).issubset(set(options1)):
+                            if all(in_options(options2[name], [options1[name]]) for name in options2):
+                                added = True
+                    if not added:
+                        common.append(options2)
+            return common
+        return list(iter_options(common_options([entry.options for entry in self.data], intersection=True), include=include, exclude=exclude))
 
     def iter(self, include=None, exclude=None, get=None, intersection=True):
         """
@@ -984,8 +995,10 @@ class FileManager(FileEntryCollection):
             fm = self.clone(data=[])
             for entry in self.data:
                 entry = entry.select(ignore=not intersection, **{**entry.options, **options})
-                fm.append(entry)
-            fms.append(fm)
+                if entry:
+                    fm.append(entry)
+            if fm:
+                fms.append(fm)
         if get is False:
             return fms
         if get is None:

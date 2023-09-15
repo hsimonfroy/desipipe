@@ -15,7 +15,7 @@ class MyFileEntry(BaseFileEntry):
 
 def test_file_manager():
 
-    fm = FileManager(database='test_file_manager.yaml', environ=dict(DESIPIPEENVDIR='.'))
+    fm = FileManager(database='test_file_manager.yaml', environ=dict(DESIPIPEENVDIR='.'))    
     fmp = fm.select(keywords='power', zrange=[1., 1.2])
     assert len(fmp) == 1
     assert len(fmp.filepaths) == 6
@@ -24,14 +24,13 @@ def test_file_manager():
         #print(fn, fn.get(option='my_option').filepath)
     assert len(fm.select(zrange=[1., 1.2])) == 2
     assert len(fm.select(zrange=[1., 1.2], ignore=True)) == len(fm)
-    for fn in fm.iter(intersection=False):
-        print(fn.options)
-        fn.get(filetype='catalog'), fn.get(filetype='power')
     for fn in fm.select(filetype='catalog', tracer='ELG', ignore=['tracer']).iter(exclude='tracer'):
         fn.get(tracer='LRG')
     for fn in fm.select(filetype='catalog'):
         assert fn == fn
         print(fn.filepath)
+    for options in fm.iter_options(intersection=False):
+        print(options)
     for fn1, fn2 in zip(fm.select(filetype='catalog'), fm.select(filetype='catalog')):
         assert fn2.filepath == fn1.filepath
     for fn in fm.select(filetype='catalog').iter(exclude=['field']):
