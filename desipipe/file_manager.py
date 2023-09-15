@@ -948,11 +948,11 @@ class FileManager(FileEntryCollection):
                     added = False
                     for i1, options1 in enumerate(common):
                         if set(options1).issubset(set(options2)):  # options1 in options
-                            if all(in_options(options1[name], [options2[name]]) for name in options1):
+                            if all(options1[name] == options2[name] for name in options1):
                                 added = True
                                 common[i1] = options2
                         elif set(options2).issubset(set(options1)):
-                            if all(in_options(options2[name], [options1[name]]) for name in options2):
+                            if all(options2[name] == options1[name] for name in options2):
                                 added = True
                     if not added:
                         common.append(options2)
