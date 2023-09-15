@@ -104,7 +104,23 @@ Now, we can spawn a manager process that will run the above tasks, following the
 
 One can interact with ``queue`` from python directly, e.g.: :meth:`Queue.tasks` to list tasks,
 :meth:`Queue.pause` to pause the queue, :meth:`Queue.resume` to resume the queue, etc.
-Usually though, one will use the command line: see below.
+Usually though, one will use the command line: see the cheat list below.
+
+
+Debugging
+---------
+
+If some tasks of a queue 'my_queue' failed, you can check their input parameters,
+and try to rerun them (with other parameters), with:
+
+.. code-block:: python
+
+  queue = Queue('my_queue')
+  for task in queue.tasks(state='FAILED'):
+      print(task.kwargs)
+      print(task.app.code)  # code that is run
+      task.run()  # you can pass any argument to override those in kwargs
+
 
 Cheat list
 ----------
@@ -133,11 +149,11 @@ Print tasks in queue
   desipipe tasks -q my_queue
 
 Task state can be:
-- 'WAITING':  Waiting for requirements (other tasks) to finish
-- 'PENDING':  Eligible to be selected and run
-- 'RUNNING':  Running right now
-- 'SUCCEEDED':  Finished with errno = 0
-- 'FAILED':  Finished with errno != 0
+- 'WAITING': Waiting for requirements (other tasks) to finish
+- 'PENDING': Eligible to be selected and run
+- 'RUNNING': Running right now (out and err are updated live)
+- 'SUCCEEDED': Finished with errno = 0
+- 'FAILED': Finished with errno != 0
 
 Pause a queue
 ~~~~~~~~~~~~~

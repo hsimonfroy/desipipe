@@ -8,6 +8,7 @@ Example notebooks presenting most use cases are provided in directory nb/.
 ## Documentation
 
 Documentation in construction on Read the Docs, [desipipe docs](https://desipipe.readthedocs.io/).
+See in particular [getting started](https://desipipe.readthedocs.io/en/latest/user/getting_started.html).
 
 ## Requirements
 
