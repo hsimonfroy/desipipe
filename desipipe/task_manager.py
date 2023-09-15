@@ -1774,7 +1774,7 @@ def kill(queue=None, provider=None, jobid=None, state=None, **kwargs):
                 task.app.task_manager.provider.kill(task.jobid)
 
 
-def retry(queue, state=TaskState.KILLED, **kwargs):
+def retry(queue, **kwargs):
     """
     Move (by default killed) tasks into PENDING state, so they are rerun.
 
