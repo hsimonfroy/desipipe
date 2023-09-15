@@ -265,6 +265,7 @@ class BaseFile(BaseMutableClass):
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = os.path.join(tmp_dir, os.path.basename(filepath))
             toret = get_filetype(filetype=self.filetype, path=path).write(*args, **kwargs)
+            self.log_info('Moving output to {}'.format(filepath))
             shutil.copytree(tmp_dir, dirname, dirs_exist_ok=True)
             return toret
 
