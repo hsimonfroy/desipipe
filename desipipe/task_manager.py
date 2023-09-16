@@ -1609,7 +1609,6 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
                 #query = 'UPDATE tasks SET state=? WHERE tid=?'
                 #queue._query([query, (state, task.id)])
                 #queue.db.commit()
-                state = TaskState.KILLED
                 queue.set_task_state(task.id, state)
         if MPI is not None:
             MPI.COMM_WORLD = mpicomm_bak
