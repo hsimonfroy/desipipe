@@ -1599,14 +1599,15 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     mpicomm_bak = mpicomm
 
     def exit_killed(signal_number, stack_frame):
-        if MPI is not None: MPI.COMM_WORLD = mpicomm_bak
-        task.state = TaskState.KILLED
-        if itask < 1 or signal_number == signal.SIGINT:
+        if mpicomm is not None: mpicomm.barrier()
+        if mpicomm is None or mpicomm.rank == 0:
             task.state = TaskState.KILLED
-        else:
-            task.state = TaskState.PENDING  # automatically propose new task
-        queue.add(task, replace=True)
-        exit()
+            if itask < 1 or signal_number == signal.SIGINT:
+                task.state = TaskState.KILLED
+            else:
+                task.state = TaskState.PENDING  # automatically propose new task
+            queue.add(task, replace=True)
+        if MPI is not None: MPI.COMM_WORLD = mpicomm_bak
 
     queue = get_queue(queue, create=False, one=True)
     itask = 0
