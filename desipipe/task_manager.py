@@ -498,7 +498,7 @@ QueueState = type('QueueState', (), {**dict(zip(queue_states, queue_states)), 'A
 
 def _make_list(obj, tp=str):
     if obj is None:
-        return [], True
+        return [], False
     one = False
     if not isinstance(obj, (tuple, list)):
         one = True
