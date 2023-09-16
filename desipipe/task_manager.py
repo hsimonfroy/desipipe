@@ -764,7 +764,7 @@ class Queue(BaseClass):
             return futures[0]
         return futures
 
-    def _get_lock(self, timeout=10., timestep=1.):
+    def _get_lock(self, timeout=10., timestep=0.2):
         # """Get lock on the data base."""
         t0 = time.time()
         while True:
@@ -1146,7 +1146,7 @@ class Queue(BaseClass):
     def __delitem__(self, tid):
         """Delete task with input ID ``tid``."""
         if not self._get_lock():
-            self.log_error('unable to get db lock; not deleting tasj')
+            self.log_error('unable to get db lock; not deleting task')
             return
         query = 'DELETE FROM tasks WHERE tid=?'
         self._query([query, (tid,)])
