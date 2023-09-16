@@ -242,7 +242,7 @@ class SlurmProvider(BaseProvider):
         for line in sqs[1:]:
             if line:
                 state = line[istate:]
-                if not state.startswith('GC'):
+                if not state.startswith('CG'):
                     jobids.append(line.split()[0].strip())
         # print(jobids, self.processes)
         return sum(workers * (jobid in jobids) for jobid, workers in self.processes)
@@ -275,7 +275,7 @@ class NERSCProvider(SlurmProvider):
         Beyond this number of allocated nodes, cost increases linearly.
     """
     name = 'nersc'
-    _defaults = {**SlurmProvider._defaults, 'threshold_nodes': 1}
+    _defaults = {**SlurmProvider._defaults, 'threshold_nodes': 1}  # threshold_nodes = 1: favors 1-node jobs
 
     def __init__(self, *args, **kwargs):
         super(NERSCProvider, self).__init__(*args, **kwargs)
@@ -287,5 +287,4 @@ class NERSCProvider(SlurmProvider):
         nodes = self.nodes(workers=workers)
         if nodes < self.threshold_nodes:
             return 0
-        # Beyond threshold_nodes, cost increases (longer time in queue)
         return nodes - self.threshold_nodes

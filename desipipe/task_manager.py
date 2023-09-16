@@ -1039,8 +1039,6 @@ class Queue(BaseClass):
         if task is None:
             return None
         jobid = task.app.task_manager.provider.jobid()
-        self.set_task_state(task.id, TaskState.RUNNING)
-        self.set_task_jobid(task.id, jobid)
         task.update(state=TaskState.RUNNING, jobid=jobid)
         return task
 
@@ -1314,8 +1312,11 @@ class MyStream(object):
         self._log = io.StringIO()
         self.callback = callback
 
-    def write(self, message):
-        self._stream.write(message)
+    def flush(self):
+        self._stream.flush()
+
+    def write(self, message, **kwargs):
+        self._stream.write(message, **kwargs)
         self._log.write(message)
         if self.callback is not None:
             self.callback()
@@ -1592,29 +1593,36 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     try:
         from mpi4py import MPI
     except ImportError:
-        MPI = mpicomm = None
+        MPI = mpicomm = mpicomm_bak = None
     else:
+        mpicomm_bak = MPI.COMM_WORLD
         if mpicomm is None:
             mpicomm = MPI.COMM_WORLD
-    mpicomm_bak = mpicomm
 
     def exit_killed(signal_number, stack_frame):
-        if mpicomm is not None: mpicomm.barrier()
         if mpicomm is None or mpicomm.rank == 0:
-            task.state = TaskState.KILLED
-            if itask < 1 or signal_number == signal.SIGINT:
-                task.state = TaskState.KILLED
-            else:
-                task.state = TaskState.PENDING  # automatically propose new task
-            queue.add(task, replace=True)
-        if MPI is not None: MPI.COMM_WORLD = mpicomm_bak
+            if task is not None:
+                if itask < 1 or signal_number == signal.SIGINT:
+                    state = TaskState.KILLED
+                else:
+                    state = TaskState.PENDING  # automatically propose new task
+                #query = 'UPDATE tasks SET state=? WHERE tid=?'
+                #queue._query([query, (state, task.id)])
+                #queue.db.commit()
+                queue.set_task_state(task.id, state)
+        if MPI is not None:
+            MPI.COMM_WORLD = mpicomm_bak
+            mpicomm_all.barrier()
+        exit()
 
     queue = get_queue(queue, create=False, one=True)
+    task = None
     itask = 0
 
     signal.signal(signal.SIGINT, exit_killed)
     signal.signal(signal.SIGTERM, exit_killed)
 
+    mpicomm_all = mpicomm
     if mpisplits is not None:
         if mpicomm is None:
             raise ImportError('mpicomm not defined')
@@ -1638,16 +1646,21 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     if provider is not None:
         provider = get_provider(provider)
         jobid = provider.jobid()
+
     while True:
-        task = None
+        stask = task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
         if mpicomm is None or mpicomm.rank == 0:
             task = queue.pop(mid=mid, tid=tid, name=name, jobid=jobid)
-            task = TaskPickler.dumps(task, reduce_app=None)
+            # Not in pop, because we want the task to be set in running state only when exit_killed can access it
+            if task is not None:  # can be None if no task to pop
+                queue.set_task_state(task.id, TaskState.RUNNING)
+                queue.set_task_jobid(task.id, task.jobid)
+            stask = TaskPickler.dumps(task, reduce_app=None)
         if mpicomm is not None:
-            task = mpicomm.bcast(task, root=0)
-        #task_in = TaskUnpickler.loads(task)
-        task = TaskUnpickler.loads(task)
+            stask = mpicomm.bcast(stask, root=0)
+        #task_in = TaskUnpickler.loads(stask)
+        task = TaskUnpickler.loads(stask)
         if task is None:
             break
         kwargs = {}
@@ -1904,9 +1917,9 @@ def action_from_args(action='work', args=None):
                 logger.info('Tasks that are {}:'.format(state))
                 for task in tasks:
                     logger.info('app: {}'.format(task.app.name))
-                    if task.errno is not None:
-                        for name in ['jobid', 'errno', 'err', 'out']:
-                            logger.info('{}: {}'.format(name, getattr(task, name)))
+                    for name in ['jobid', 'errno', 'err', 'out']:
+                        value = getattr(task, name)
+                        if value: logger.info('{}: {}'.format(name, value))
                     logger.info('=' * 30)
         return
 
