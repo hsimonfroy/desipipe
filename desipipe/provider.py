@@ -202,7 +202,7 @@ class SlurmProvider(BaseProvider):
     """
     name = 'slurm'
     _defaults = dict(account='desi', constraint='cpu', qos='regular', time='01:00:00', nodes_per_worker=1., mpiprocs_per_worker=1,
-                     output='/dev/null', error='/dev/null', mpiexec='srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}')
+                     output='/dev/null', error='/dev/null', mpiexec='srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', signal='SIGTERM@45')
 
     @classmethod
     def jobid(cls):
@@ -229,7 +229,7 @@ class SlurmProvider(BaseProvider):
         cmd = self.environ.to_script(sep=' ; ') + ' ; ' + cmd
         # -- parsable to get jobid (optionally, cluster name)
         # -- wrap to pass the job
-        cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--parsable', '--wrap', cmd]
+        cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--signal', str(self.signal), '--parsable', '--wrap', cmd]
         # print(' '.join(cmd))
         proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         self.processes.append((proc.stdout.split(',')[0].strip(), workers))  # jobid, workers

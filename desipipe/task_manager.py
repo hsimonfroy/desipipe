@@ -506,6 +506,10 @@ def _make_list(obj, tp=str):
     return tuple(tp(oo) for oo in obj), one
 
 
+def _to_str(li):
+    return '({})'.format(', '.join(['"{}"'.format(obj) for obj in li]))
+
+
 def get_mpicomm():
     mpicomm = None
     try:
@@ -764,7 +768,7 @@ class Queue(BaseClass):
             return futures[0]
         return futures
 
-    def _get_lock(self, timeout=10., timestep=0.2):
+    def _get_lock(self, timeout=10., timestep=1.):
         # """Get lock on the data base."""
         t0 = time.time()
         while True:
@@ -937,9 +941,6 @@ class Queue(BaseClass):
         jobid = _make_list(jobid, tp=str)[0]
         property, one_property = _make_list(property, tp=str)
 
-        def _to_str(li):
-            return '({})'.format(', '.join(['"{}"'.format(obj) for obj in li]))
-
         select = []
         if tid:
             select.append('tid IN {}'.format(_to_str(tid)))
@@ -1078,27 +1079,29 @@ class Queue(BaseClass):
             return toret[0]
         return toret
 
-    def counts(self, mid=None, state=None):
+    def counts(self, state=None, mid=None):
         """
         Count the number of tasks.
 
         Parameters
         ----------
-        mid : str, default=None
-            If not ``None``, select tasks with given task manager ID.
-
-        state : str, default=None
+        state : str, list, default=None
             If not ``None``, select tasks with given state.
+
+        mid : str, list, default=None
+            If not ``None``, select tasks with given task manager ID.
 
         Returns
         -------
         counts : int
         """
+        state = _make_list(state, tp=str)[0]
+        mid = _make_list(mid, tp=str)[0]
         select = []
-        if mid is not None:
-            select.append('mid="{}"'.format(mid))
-        if state is not None:
-            select.append('state="{}"'.format(state))
+        if state:
+            select.append('state IN {}'.format(_to_str(state)))
+        if mid:
+            select.append('mid IN {}'.format(_to_str(mid)))
         query = 'SELECT count(state) FROM tasks'
         if select: query += ' WHERE {}'.format(' AND '.join(select))
         return self._query(query).fetchone()[0]
@@ -1109,7 +1112,7 @@ class Queue(BaseClass):
 
         Parameters
         ----------
-        mid : str, default=None
+        mid : str, list, default=None
             If not ``None``, select tasks with given task manager ID.
 
         return_type : str, default='dict'
@@ -1598,10 +1601,17 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         mpicomm_bak = MPI.COMM_WORLD
         if mpicomm is None:
             mpicomm = MPI.COMM_WORLD
-
+    
+    #ti = time.time()
     def exit_killed(signal_number, stack_frame):
+        global killed
+        killed = True
+        #mpicomm_all.barrier()
+        #print('KILLED', time.time() - ti)
+        #print('KILLED', mpicomm_bak.rank, mpicomm_bak.size, mpicomm.rank, signal_number, datetime.now().strftime("%H:%M:%S"))
         if mpicomm is None or mpicomm.rank == 0:
             if task is not None:
+                #print('KILLEDTASK', mpicomm_bak.rank, mpicomm_bak.size, mpicomm.rank)
                 if itask < 1 or signal_number == signal.SIGINT:
                     state = TaskState.KILLED
                 else:
@@ -1609,17 +1619,22 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
                 #query = 'UPDATE tasks SET state=? WHERE tid=?'
                 #queue._query([query, (state, task.id)])
                 #queue.db.commit()
-                queue.set_task_state(task.id, state)
+                #state = TaskState.KILLED
+                #queue.set_task_state(task.id, state)
+                query = 'UPDATE tasks SET state=? WHERE tid=?'
+                queue._query([query, (state, task.id)])
+                queue.db.commit()
+                #print('KILLEDTASK', mpicomm_bak.rank, mpicomm_bak.size, mpicomm.rank, signal_number, datetime.now().strftime("%H:%M:%S"))
         if MPI is not None:
             MPI.COMM_WORLD = mpicomm_bak
-            mpicomm_all.barrier()
-        exit()
+        if signal_number == signal.SIGINT:
+            exit()
 
     queue = get_queue(queue, create=False, one=True)
     task = None
     itask = 0
 
-    signal.signal(signal.SIGINT, exit_killed)
+    #signal.signal(signal.SIGINT, exit_killed)
     signal.signal(signal.SIGTERM, exit_killed)
 
     mpicomm_all = mpicomm
@@ -1632,11 +1647,13 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         mpicomm = mpicomm.Split(color, 0)
         MPI.COMM_WORLD = mpicomm  # a bit hacky
 
-    global t0
+    global t0, killed
+    killed = False
     timestep = 2.
 
     def callback(out, err):
-        global t0
+        global t0, killed
+        if killed: return
         if (mpicomm is None or mpicomm.rank == 0) and time.time() - t0 > timestep:
             task.out, task.err = out, err
             queue.add(task, replace=True)
@@ -1675,7 +1692,6 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         itask += 1
         if mode == 'stop_at_error' and task.state == TaskState.FAILED:
             break
-    exit()
 
 
 def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=False):
@@ -1725,7 +1741,7 @@ def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=Fa
                 continue
             if mode == 'stop_at_error' and queue.counts(state=TaskState.FAILED):
                 continue
-            if queue.counts(state=TaskState.PENDING) or (queue.counts(state=TaskState.WAITING) and queue.counts(state=TaskState.RUNNING)):
+            if queue.counts(state=(TaskState.PENDING, TaskState.RUNNING)):
                 stop = False
             for manager in queue.managers():
                 if manager.id not in managers:

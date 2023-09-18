@@ -185,10 +185,10 @@ def iter_options(options, include=None, exclude=None, yield_index=False):
     if exclude is None:
         exclude = []
     include, exclude = _make_list(include), _make_list(exclude)
-    include = [name for name in options if name in include and not name in exclude]
+    include = [name for name in options if name in include and name not in exclude]
 
     for ivalues in itertools.product(*([Ellipsis] if options[name] is Ellipsis else range(len(options[name])) for name in include)):
-        opt = dict(options)
+        opt = {}
         for iname, name in enumerate(include):
             opt[name] = Ellipsis if options[name] is Ellipsis else options[name][ivalues[iname]]
         if yield_index:
@@ -343,7 +343,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         for name, values in self.options.items():
             self.foptions.setdefault(name, values)
 
-    def select(self, ignore=False, **kwargs):
+    def select(self, ignore=False, check_exists=False, raise_error=True, **kwargs):
         """
         Restrict to input options, e.g.
 
@@ -356,6 +356,12 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         ignore : bool, list, default=False
             If ``True``, ignore input options that are not in these entry's options.
             If list, do not apply a filter for these input options.
+        
+        check_exists : bool, default=False
+            If ``True``, check whether all files exist; if not, raise a :class:`FileNotFoundError`.
+
+        raise_error : bool, default=True
+            If ``False`` and an error is raised, catch it and return ``None``.
         """
         def eq(test, ref):
             if type(test) is not type(ref):
@@ -374,23 +380,48 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                 else:
                     foptions[name] = [foptions[name][index] for index in indices]
             elif not ignore:
-                raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
-        return self.clone(options=options, foptions=foptions)
+                if raise_error: raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
+                return None
+        toret = self.clone(options=options, foptions=foptions)
+        exists = toret.exists()
+        if check_exists and exists[False]:
+            if raise_error: raise FileNotFoundError('file {} not found.'.format(exists[False]))
+            return None
+        return toret
+            
 
-    def get(self, *args, **kwargs):
+    def get(self, *args, raise_error=True, **kwargs):
         """
         Return the :class:`BaseFile` instance that matches input arguments, see :meth:`select`.
-        If :meth:`select` returns several file entries, and / or file entries with multiples files,
-        a :class:`ValueError` is raised.
+
+        Parameters
+        ----------
+        *args, **kwargs : dict
+            If :meth:`select` returns several file entries, a :class:`ValueError` is raised.
+
+        check_exists : bool, default=False
+            If ``True``, check whether file exists; if not, raise a :class:`FileNotFoundError`.
+
+        raise_error : bool, default=True
+            If ``False`` and an error is raised, catch it and return ``None``.
+
+        Returns
+        -------
+        file : BaseFile
         """
-        new = self.select(*args, **kwargs)
-        if len(new) == 1:
-            for fi in new:
-                return fi  # BaseFile instance
-        if len(new) == 0:
-            raise ValueError('"get" is not applicable as there are no matching entries')
-        else:
+        new = self.select(*args, raise_error=raise_error, **kwargs)
+        if new is None:
+            return None
+        try:
+            if len(new) == 1:
+                for fi in new:
+                    return fi  # BaseFile instance
+            if len(new) == 0:
+                raise ValueError('"get" is not applicable as there are no matching entries')
             raise ValueError('"get" is not applicable as there are multiple options:\n{}'.format(new))
+        except ValueError:
+            if raise_error: raise
+            return None
 
     def __len__(self):
         """Length, i.e. number of individual files (looping over all options) described by this file entry."""
@@ -409,7 +440,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         fi.options, fi.foptions = options, foptions
         return fi
 
-    def iter_options(self, include=None, exclude=None):
+    def iter_options(self, include=None, exclude=None, return_foptions=False):
         """
         Iterate over options.
 
@@ -422,12 +453,29 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         exclude : str, list, default=None
             List of options to exclude in the iteration.
             ``None`` to not exclude any option.
+        
+        return_foptions : bool, default=False
+            If ``True``, return list of ``(options, foptions)``,
+            where ``foptions`` are the options to be passed to the formatted path.
 
         Returns
         -------
         options : list of the options.
         """
-        return list(iter_options(self.options, include=include, exclude=exclude))
+        toret = []
+        for options, index in iter_options(self.options, include=include, exclude=exclude, yield_index=True):
+            foptions = {}
+            for iname, name in enumerate(options):
+                if options[name] is Ellipsis:
+                    foptions[name] = self.foptions[name]
+                else:
+                    foptions[name] = self.foptions[name][index[iname]]
+            if return_foptions:
+                toret.append((options, foptions))
+            else:
+                toret.append(options)
+        
+        return toret
 
     def iter(self, include=None, exclude=None):
         """
@@ -447,16 +495,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         -------
         files : list of files.
         """
-        files = []
-        for options, index in iter_options(self.options, include=include, exclude=exclude, yield_index=True):
-            foptions = {}
-            for iname, name in enumerate(options):
-                if options[name] is Ellipsis:
-                    foptions[name] = self.foptions[name]
-                else:
-                    foptions[name] = self.foptions[name][index[iname]]
-            files.append(self._get_file(options, foptions=foptions))
-        return files
+        return [self._get_file(options, foptions=foptions) for options, foptions in self.iter_options(include=include, exclude=exclude, return_foptions=True)]
 
     def __iter__(self):
         """Iterate over all files (looping over all options) described by this file entry."""
@@ -601,7 +640,7 @@ class FileEntryCollection(BaseClass):
             for dd in self.parser(string, **kwargs):
                 self.append(dd)
 
-    def index(self, id=None, filetype=None, keywords=None, **kwargs):
+    def index(self, id=None, filetype=None, keywords=None, return_entry=False, **kwargs):
         """
         Return indices for input identifiers, keywords, or options, e.g.
 
@@ -644,7 +683,7 @@ class FileEntryCollection(BaseClass):
         if keywords is not None:
             keywords = _make_list_options(keywords)
             keywords = [keyword.lower().split() for keyword in keywords]
-        index = []
+        indices, entries = [], []
         for ientry, entry in enumerate(self.data):
             if id is not None and entry.id.lower() not in id:
                 continue
@@ -658,10 +697,13 @@ class FileEntryCollection(BaseClass):
                 entry = entry.select(**kwargs)
             except ValueError:
                 continue
-            if not entry:
+            if entry is None or not entry:
                 continue
-            index.append(ientry)
-        return index
+            indices.append(ientry)
+            entries.append(entry)
+        if return_entry:
+            return indices, entries
+        return indices
 
     def select(self, id=None, filetype=None, keywords=None, **kwargs):
         """
@@ -702,26 +744,39 @@ class FileEntryCollection(BaseClass):
         new : FileEntryCollection
             Selected data base.
         """
-        new = self[self.index(id=id, filetype=filetype, keywords=keywords, **kwargs)]
-        for ientry, entry in enumerate(new.data):
-            new.data[ientry] = entry.select(**kwargs)  # select options
-        return new
+        data = self.index(id=id, filetype=filetype, keywords=keywords, return_entry=True, **kwargs)[1]
+        return self.clone(data=data)
 
-    def get(self, *args, **kwargs):
+    def get(self, *args, check_exists=False, raise_error=True, **kwargs):
         """
         Return the :class:`BaseFile` instance that matches input arguments, see :meth:`select`.
-        If :meth:`select` returns several file entries, and / or file entries with multiples files,
-        a :class:`ValueError` is raised.
+
+        Parameters
+        ----------
+        *args, **kwargs : dict
+            If :meth:`select` returns several file entries, and / or file entries with multiples files,
+            a :class:`ValueError` is raised.
+
+        check_exists : bool, default=False
+            If ``True``, check whether file exists; if not, raise a :class:`FileNotFoundError`.
+
+        raise_error : bool, default=True
+            If ``False`` and an error is raised, catch it and return ``None``.
+
+        Returns
+        -------
+        file : BaseFile
         """
         new = self.select(*args, **kwargs)
-        if len(new.data) == 1 and len(new[0]) == 1:
-            for fi in new[0]:
-                return fi  # BaseFile instance
-        if prod(len(entry) for entry in new.data) == 0:
+        if len(new.data) == 1:
+            return new.data[0].get(check_exists=check_exists, raise_error=raise_error)
+        try:
+            if len(new.data) > 1:
+                raise ValueError('"get" is not applicable as there are {} entries:\n{}'.format(len(new.data), '\n'.join([repr(entry) for entry in new.data])))
             raise ValueError('"get" is not applicable as there are no matching entries')
-        if len(new.data) > 1:
-            raise ValueError('"get" is not applicable as there are {} entries:\n{}'.format(len(new.data), '\n'.join([repr(entry) for entry in new.data])))
-        raise ValueError('"get" is not applicable as there is 1 entry with multiple options:\n{}'.format('\n'.join([repr(entry) for entry in new.data])))
+        except ValueError:
+            if raise_error: raise
+            return None
 
     def __getitem__(self, index):
         """Return file entry(ies) at the input index(ices) in the list."""
@@ -754,17 +809,11 @@ class FileEntryCollection(BaseClass):
         entry.environ = self.environ
         return entry
 
-    def insert(self, index, entry):
-        """
-        Insert a new file entry, at input index.
-        ``entry`` may be e.g. a dictionary, or a :class:`BaseFileEntry` instance,
-        in which case a shallow copy is made.
-        """
-        self.data.insert(index, self._get_file_entry(entry))
-
     def append(self, entry):
         """Append an input file entry, which may be e.g. a dictionary, or a :class:`BaseFileEntry` instance."""
-        self.data.append(self._get_file_entry(entry))
+        entry = self._get_file_entry(entry)
+        if entry not in self.data:
+            self.data.append(entry)
 
     def write(self, fn):
         """Write data base to *yaml* file ``fn``."""
@@ -820,10 +869,6 @@ class FileEntryCollection(BaseClass):
         return new
 
     def __radd__(self, other):
-        if other == 0: return self.copy()
-        return self.__add__(other)
-
-    def __iadd__(self, other):
         if other == 0: return self.copy()
         return self.__add__(other)
 

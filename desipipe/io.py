@@ -73,7 +73,7 @@ class TextFile(BaseFile):
 
     def write(self, txt):
         """Write file."""
-        utils.mkdir(os.path.dirname(txt))
+        utils.mkdir(os.path.dirname(self.path))
         with open(self.path, 'w') as file:
             file.write(txt)
 
@@ -98,7 +98,7 @@ class PowerSpectrumFile(BaseFile):
     """Power spectrum file."""
     name = 'power'
 
-    def read(self, mode='poles'):
+    def read(self, *select, mode='poles'):
         """Read power spectrum."""
         from pypower import MeshFFTPower, PowerSpectrumStatistics
         with utils.LoggingContext(level='warning'):
@@ -107,6 +107,8 @@ class PowerSpectrumFile(BaseFile):
                 toret = getattr(toret, mode)
             except AttributeError:
                 toret = PowerSpectrumStatistics.load(self.path)
+        if select:
+            toret = toret.select(*select)
         return toret
 
     def write(self, power):
@@ -119,11 +121,13 @@ class CorrelationFunctionFile(BaseFile):
     """Correlation function file."""
     name = 'correlation'
 
-    def read(self):
+    def read(self, *select):
         """Read correlation function."""
         from pycorr import TwoPointCorrelationFunction
         with utils.LoggingContext(level='warning'):
             toret = TwoPointCorrelationFunction.load(self.path)
+        if select:
+            toret = toret.select(*select)
         return toret
 
     def write(self, corr):
@@ -158,6 +162,11 @@ class GenericFile(BaseFile):
 
     def read(self, read, **kwargs):
         """Read."""
+        for name in ['read', 'load']:
+            func = getattr(read, name, None)
+            if callable(func):
+                read = func
+                break
         return read(self.path, **kwargs)
 
     def write(self, write, **kwargs):
