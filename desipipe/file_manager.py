@@ -383,10 +383,11 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                 if raise_error: raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
                 return None
         toret = self.clone(options=options, foptions=foptions)
-        exists = toret.exists()
-        if check_exists and exists[False]:
-            if raise_error: raise FileNotFoundError('file {} not found.'.format(exists[False]))
-            return None
+        if check_exists:
+            exists = toret.exists()
+            if exists[False]:
+                if raise_error: raise FileNotFoundError('file {} not found.'.format(exists[False]))
+                return None
         return toret
             
 

@@ -69,7 +69,7 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
 
     def cost(self, workers=1):
         """
-        Compute cost associated to the input number of workers.
+        Compute cost associated to the input number of workers (in addition to running ones).
         Only cost variations matter (not the absolute cost):
         constant cost triggers more workers, increasing cost penalizes more workers.
         """
@@ -157,11 +157,11 @@ class LocalProvider(BaseProvider):
 
     def cost(self, workers=1):
         """
-        Compute cost associated to the input number of workers.
+        Compute cost associated to the input number of workers (in addition to running ones).
         Cost is constant, then increases steeply when
         the total number of processes (workers times MPI) reaches the number of CPU counts.
         """
-        nprocs = workers * self.mpiprocs_per_worker
+        nprocs = workers * self.mpiprocs_per_worker + self.nrunning()
         ncpus = os.cpu_count()
         if nprocs < ncpus:
             return 0.
@@ -232,10 +232,13 @@ class SlurmProvider(BaseProvider):
         cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--signal', str(self.signal), '--parsable', '--wrap', cmd]
         # print(' '.join(cmd))
         proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        self.processes.append((proc.stdout.split(',')[0].strip(), workers))  # jobid, workers
+        self.processes.append((proc.stdout.split(',')[0].strip(), nodes, workers))  # jobid, workers
 
-    def nrunning(self):
+    def nrunning(self, of='workers'):
         """Number of running workers."""
+        allowed_of = ['workers', 'nodes']
+        if of not in allowed_of:
+            raise ValueError('of must be one of {}, found {}'.format(allowed_of, of))
         sqs = subprocess.run(['sqs'], check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')
         istate = sqs[0].index('ST')
         jobids = []
@@ -245,7 +248,9 @@ class SlurmProvider(BaseProvider):
                 if not state.startswith('CG'):
                     jobids.append(line.split()[0].strip())
         # print(jobids, self.processes)
-        return sum(workers * (jobid in jobids) for jobid, workers in self.processes)
+        if of == 'workers':
+            return sum(workers * (jobid in jobids) for jobid, nodes, workers in self.processes)
+        return sum(nodes * (jobid in jobids) for jobid, nodes, workers in self.processes)
 
     def nodes(self, workers=1):
         """
@@ -256,8 +261,8 @@ class SlurmProvider(BaseProvider):
         return math.ceil(self.nodes_per_worker * workers)
 
     def cost(self, workers=1):
-        """Cost required for input number of workers."""
-        return self.nodes(workers=workers)
+        """Cost required for input number of workers (in addition to running ones)."""
+        return self.nodes(workers=workers) + self.nrunning(of='nodes')
 
 
 class NERSCProvider(SlurmProvider):
@@ -283,8 +288,8 @@ class NERSCProvider(SlurmProvider):
         self.nodes_per_worker = max(self.nodes_per_worker, self.mpiprocs_per_worker * 1. / self.max_mpiprocs_per_node)
 
     def cost(self, workers=1):
-        """Cost required for input number of workers."""
-        nodes = self.nodes(workers=workers)
+        """Cost required for input number of workers (in addition to running ones)."""
+        nodes = self.nodes(workers=workers) + self.nrunning(of='nodes')
         if nodes < self.threshold_nodes:
             return 0
         return nodes - self.threshold_nodes

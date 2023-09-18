@@ -101,11 +101,11 @@ class SimpleScheduler(BaseScheduler):
     def __call__(self, cmd, ntasks=None):
         if ntasks is None:
             ntasks = 1
-        nrunning = self.provider.nrunning()
-        max_workers = min(ntasks, self.max_workers - nrunning)
+        max_workers = min(ntasks, self.max_workers)
         best_workers, best_cost = 0, float('inf')
-        for workers in range(1, max_workers + 1):
-            cost = self.provider.cost(workers=workers + nrunning)
+        for workers in range(1, self.max_workers + 1):
+            if (workers + self.provider.nrunning()) > self.max_workers: break
+            cost = self.provider.cost(workers=workers)
             if cost <= best_cost:
                 best_workers, best_cost = workers, cost
         if best_workers:
