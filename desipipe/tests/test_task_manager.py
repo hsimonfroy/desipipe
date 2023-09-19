@@ -87,7 +87,7 @@ def test_queue(spawn=True, run=False):
         assert avg2.result() == avg.result()
         print(avg.result(), time.time() - t0)
 
-    @tm2.bash_app(name=True)
+    @tm2.bash_app(name=True, state='SUCCEEDED')
     def fraction():
         return None
 

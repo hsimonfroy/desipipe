@@ -1188,7 +1188,7 @@ class BaseApp(BaseClass):
     task_manager : TaskManager
         Task manager to which the task has been added.
     """
-    def __init__(self, func, task_manager=None, skip=False, name=None, save_attrs=('code', 'versions'), save_dir=None):
+    def __init__(self, func, task_manager=None, skip=False, name=None, state=tuple(), save_attrs=('code', 'versions'), save_dir=None):
         """
         Initialize application, called by :class:`TaskManager` decorators :meth:`TaskManager.bash_app` and :meth:`TaskManager.python_app`.
 
@@ -1203,7 +1203,7 @@ class BaseApp(BaseClass):
         if isinstance(func, self.__class__):
             self.__dict__.update(func.__dict__)
             return
-        self.add = {'skip': False, 'name': None}
+        self.add = {'skip': False, 'name': None, 'state': tuple()}
         self.update(func=func, task_manager=task_manager, skip=skip, name=name, save_attrs=save_attrs, save_dir=save_dir)
 
     def update(self, **kwargs):
@@ -1233,6 +1233,12 @@ class BaseApp(BaseClass):
                 if not isinstance(name, str):
                     name = self.name
                 self.add['name'] = name
+                self.add['state'] = tuple(TaskState.ALL)
+        if 'state' in kwargs:
+            state = kwargs.pop('state', None)
+            if state is None: state = TaskState.ALL
+            self.add['state'] = tuple(_make_list(state)[0])
+            if self.add['state']: self.add.setdefault('name', self.name)
         if 'save_attrs' in kwargs:
             self.save_attrs = kwargs.pop('save_attrs')
             if isinstance(self.save_attrs, str):
@@ -1260,10 +1266,15 @@ class BaseApp(BaseClass):
             return None
         queue = self.task_manager.queue
         if self.add['name']:
-            tid = queue.tasks(name=self.add['name'], index=self.index, property='tid')
-            return Future(queue=queue, tid=tid)
+            tid, state = queue.tasks(name=self.add['name'], index=self.index, property=('tid', 'state'))
+            if state in self.add['state']:
+                return Future(queue=queue, tid=tid)
+            else:
+                self = self.copy()
+                self.name = self.add['name']
         kwargs = inspect.getcallargs(self.func, *args, **kwargs)
-        return queue.add(Task(self, kwargs), replace=None)
+        task = Task(self, kwargs)
+        return queue.add(task, replace=None)
 
     def __getstate__(self):
         """Return app state."""
@@ -1272,7 +1283,7 @@ class BaseApp(BaseClass):
 
     def __setstate__(self, state):
         """Set app state."""
-        self.add = {'skip': False, 'name': None}
+        self.add = {'skip': False, 'name': None, 'state': tuple()}
         self.__dict__.update(state)
         self.func = deserialize_function(self.name, self.code, self.dlocals)
 

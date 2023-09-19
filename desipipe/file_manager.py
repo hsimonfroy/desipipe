@@ -238,6 +238,16 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     """
     _defaults = dict(filetype='generic', path='', id='', author='', options=dict(), foptions=dict(), description='')
 
+    def update(self, **kwargs):
+        """Update input attributes."""
+        super(BaseFile, self).update(**kwargs)
+        if 'options' in kwargs:
+            self.options, self.foptions = dict(kwargs['options']), dict(kwargs['options'])
+        if 'foptions' in kwargs:
+            self.foptions = dict(kwargs['foptions'])
+        for name, values in self.options.items():
+            self.foptions.setdefault(name, values)
+
     def __fspath__(self):
         """Real path i.e. replacing placeholders in :attr:`path` by their value."""
         path = path_replace_environ(self.path, environ=getattr(self, 'environ', {}))
