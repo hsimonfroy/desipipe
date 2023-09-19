@@ -1620,13 +1620,13 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
                 #queue._query([query, (state, task.id)])
                 #queue.db.commit()
                 #state = TaskState.KILLED
-                #queue.set_task_state(task.id, state)
-                query = 'UPDATE tasks SET state=? WHERE tid=?'
-                queue._query([query, (state, task.id)])
-                queue.db.commit()
+                queue.set_task_state(task.id, state)
+                #query = 'UPDATE tasks SET state=? WHERE tid=?'
+                #queue._query([query, (state, task.id)])
+                #queue.db.commit()
                 #print('KILLEDTASK', mpicomm_bak.rank, mpicomm_bak.size, mpicomm.rank, signal_number, datetime.now().strftime("%H:%M:%S"))
-        if MPI is not None:
-            MPI.COMM_WORLD = mpicomm_bak
+        #if MPI is not None:
+        #    MPI.COMM_WORLD = mpicomm_bak
         if signal_number == signal.SIGINT:
             exit()
 

@@ -197,7 +197,21 @@ def iter_options(options, include=None, exclude=None, yield_index=False):
             yield opt
 
 
-class BaseFile(BaseMutableClass):
+def path_replace_environ(path, environ=None):
+    environ = environ or {}
+    placeholders = re.finditer(r'\$\{.*?\}', path)
+    for placeholder in placeholders:
+        placeholder = placeholder.group()
+        placeholder_nobrackets = placeholder[2:-1]
+        if placeholder_nobrackets in environ:
+            path = path.replace(placeholder, environ[placeholder_nobrackets])
+    return path
+
+
+class JointMetaClass(type(os.PathLike), type(BaseClass)): pass
+
+
+class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     """
     Class describing a single file (single :attr:`options` values).
 
@@ -224,17 +238,9 @@ class BaseFile(BaseMutableClass):
     """
     _defaults = dict(filetype='generic', path='', id='', author='', options=dict(), foptions=dict(), description='')
 
-    @property
-    def filepath(self):
+    def __fspath__(self):
         """Real path i.e. replacing placeholders in :attr:`path` by their value."""
-        path = self.path
-        environ = getattr(self, 'environ', {})
-        placeholders = re.finditer(r'\$\{.*?\}', path)
-        for placeholder in placeholders:
-            placeholder = placeholder.group()
-            placeholder_nobrackets = placeholder[2:-1]
-            if placeholder_nobrackets in environ:
-                path = path.replace(placeholder, environ[placeholder_nobrackets])
+        path = path_replace_environ(self.path, environ=getattr(self, 'environ', {}))
 
         # return path.format(**self.foptions)
         def fstr(template, kwargs):
@@ -242,12 +248,9 @@ class BaseFile(BaseMutableClass):
 
         return fstr(path, self.foptions)
 
-    def exists(self):
-        return os.path.isfile(self.filepath)
-
     def read(self, *args, **kwargs):
         """Read file from disk."""
-        return get_filetype(filetype=self.filetype, path=self.filepath).read(*args, **kwargs)
+        return get_filetype(filetype=self.filetype, path=self.__fspath__()).read(*args, **kwargs)
 
     def write(self, *args, **kwargs):
         """
@@ -256,7 +259,7 @@ class BaseFile(BaseMutableClass):
         can be added to the current instance.
         """
         write_attrs = getattr(self, 'write_attrs', None)
-        filepath = self.filepath
+        filepath = self.__fspath__()
         dirname = os.path.dirname(filepath)
         utils.mkdir(dirname)
         if write_attrs is not None:
@@ -270,11 +273,22 @@ class BaseFile(BaseMutableClass):
             shutil.copytree(tmp_dir, dirname, dirs_exist_ok=True)
             return toret
 
+    def exists(self):
+        """``True`` if file exists, else ``False``."""
+        return os.path.isfile(self.__fspath__())
+
+    @property
+    def filepath(self):
+        return self.__fspath__()
+
+    def __str__(self):
+        return self.__fspath__()
+
     def __repr__(self):
         """String representation: class name and attributes."""
         di = self.to_dict()
         di.pop('path')
-        di['filepath'] = self.filepath
+        di['filepath'] = self.__fspath__()
         di.pop('foptions')
         #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
@@ -503,22 +517,17 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         for file in self.iter(include=None, exclude=None):
             yield file
 
-    @property
-    def filepath(self):
-        return self.get().filepath
-
-    def read(self, *args, **kwargs):
-        return self.get().read(*args, **kwargs)
-
-    def write(self, *args, **kwargs):
-        return self.get().write(*args, **kwargs)
-
     def __repr__(self):
         """String representation: class name and attributes."""
         di = self.to_dict()
         di.pop('foptions', None)
         #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
+
+    @property
+    def filepaths(self):
+        """All file paths in file entry."""
+        return [ff.filepath for ff in self]
 
     def exists(self, return_type='dict'):
         """
@@ -816,8 +825,18 @@ class FileEntryCollection(BaseClass):
         if entry not in self.data:
             self.data.append(entry)
 
-    def write(self, fn):
-        """Write data base to *yaml* file ``fn``."""
+    def write(self, fn, replace_environ=False):
+        """
+        Write data base to *yaml* file ``fn``.
+
+        Parameters
+        ----------
+        fn : str, Path
+            Where to write file data base.
+
+        replace_environ : bool, default=False
+            If ``True``, replace environment variables in entry's path by their values.
+        """
         utils.mkdir(os.path.dirname(fn))
 
         with open(fn, 'w') as file:
@@ -835,6 +854,8 @@ class FileEntryCollection(BaseClass):
                 di['foptions'] = {name: values for name, values in di['foptions'].items() if not _deep_eq(values, di['options'][name])}
                 if not di['foptions']:
                     di.pop('foptions')
+                if replace_environ:
+                    di['path'] = path_replace_environ(di['path'], getattr(self, 'environ', {}))
                 dis.append(utils.dict_to_yaml(di))
             yaml.dump_all(dis, file, default_flow_style=False)
 
@@ -878,7 +899,7 @@ class FileEntryCollection(BaseClass):
         """All file paths in file data base."""
         toret = []
         for entry in self.data:
-            toret += [ff.filepath for ff in entry]
+            toret += entry.filepaths
         return toret
 
     def __repr__(self):
