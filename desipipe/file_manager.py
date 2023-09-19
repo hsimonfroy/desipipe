@@ -248,27 +248,27 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
 
         return fstr(path, self.foptions)
 
-    def read(self, *args, **kwargs):
-        """Read file from disk."""
-        return get_filetype(filetype=self.filetype, path=self.__fspath__()).read(*args, **kwargs)
+    def load(self, *args, **kwargs):
+        """Load file from disk."""
+        return get_filetype(filetype=self.filetype, path=self.__fspath__()).load(*args, **kwargs)
 
-    def write(self, *args, **kwargs):
+    def save(self, *args, **kwargs):
         """
-        Write file to disk. First written in a temporary directory, then moved to its final destination.
-        To write additional files, a method :attr:`write_attrs`, that should take the path to the directory as input,
+        Save file to disk. First written in a temporary directory, then moved to its final destination.
+        To save additional files, a method :attr:`save_attrs`, that should take the path to the directory as input,
         can be added to the current instance.
         """
-        write_attrs = getattr(self, 'write_attrs', None)
+        save_attrs = getattr(self, 'save_attrs', None)
         filepath = self.__fspath__()
         dirname = os.path.dirname(filepath)
         utils.mkdir(dirname)
-        if write_attrs is not None:
+        if save_attrs is not None:
             with tempfile.TemporaryDirectory() as tmp_dir:
-                new_dir = write_attrs(tmp_dir) or dirname
+                new_dir = save_attrs(tmp_dir) or dirname
                 shutil.copytree(tmp_dir, new_dir, dirs_exist_ok=True)
         with tempfile.TemporaryDirectory() as tmp_dir:
             path = os.path.join(tmp_dir, os.path.basename(filepath))
-            toret = get_filetype(filetype=self.filetype, path=path).write(*args, **kwargs)
+            toret = get_filetype(filetype=self.filetype, path=path).save(*args, **kwargs)
             self.log_info('Moving output to {}'.format(filepath))
             shutil.copytree(tmp_dir, dirname, dirs_exist_ok=True)
             return toret
@@ -825,14 +825,14 @@ class FileEntryCollection(BaseClass):
         if entry not in self.data:
             self.data.append(entry)
 
-    def write(self, fn, replace_environ=False):
+    def save(self, fn, replace_environ=False):
         """
-        Write data base to *yaml* file ``fn``.
+        Save data base to *yaml* file ``fn``.
 
         Parameters
         ----------
         fn : str, Path
-            Where to write file data base.
+            Where to save file data base.
 
         replace_environ : bool, default=False
             If ``True``, replace environment variables in entry's path by their values.
@@ -963,7 +963,7 @@ def common_options(list_options, intersection=True):
 
 class FileManager(FileEntryCollection):
 
-    """BaseFile manager, main class to be used to get paths to / read / write files."""
+    """BaseFile manager, main class to be used to get paths to / load / save files."""
 
     def __init__(self, database=(), environ=None):
         environ = get_environ(environ).to_dict(all=True)

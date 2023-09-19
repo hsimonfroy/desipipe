@@ -162,10 +162,10 @@ def test_file(spawn=True):
 
     @tm.python_app
     def copy(text_in, text_out):
-        text = text_in.read()
+        text = text_in.load()
         text += ' this is my first message'
         print('saving', text_out.filepath)
-        text_out.write(text)
+        text_out.save(text)
 
     results = []
     for fi in fm:
@@ -197,5 +197,5 @@ if __name__ == '__main__':
     #test_app()
     test_queue(spawn=True, run=False)
     #test_cmdline()
-    #test_file(spawn=True)
+    test_file(spawn=True)
     #test_mpi()

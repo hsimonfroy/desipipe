@@ -20,18 +20,18 @@ class RegisteredFile(type(BaseClass)):
 
 class BaseFile(BaseClass, metaclass=RegisteredFile):
 
-    """Base class to handle a file, with path saved as :attr:`path`, and :meth:`read` and :meth:`write` methods."""
+    """Base class to handle a file, with path saved as :attr:`path`, and :meth:`load` and :meth:`save` methods."""
 
     name = 'base'
 
     def __init__(self, path):
         self.path = path
 
-    def read(self):
-        raise NotImplementedError('Implement read method in {}'.format(self.__class__.__name__))
+    def load(self):
+        raise NotImplementedError('Implement load method in {}'.format(self.__class__.__name__))
 
-    def write(self):
-        raise NotImplementedError('Implement write method in {}'.format(self.__class__.__name__))
+    def save(self):
+        raise NotImplementedError('Implement save method in {}'.format(self.__class__.__name__))
 
 
 def get_filetype(filetype, path, *args, **kwargs):
@@ -66,13 +66,13 @@ class TextFile(BaseFile):
     """Text file."""
     name = 'text'
 
-    def read(self):
-        """Read file."""
+    def load(self):
+        """Load file."""
         with open(self.path, 'r') as file:
-            return file.read()
+            return file.load()
 
-    def write(self, txt):
-        """Write file."""
+    def save(self, txt):
+        """Save file."""
         utils.mkdir(os.path.dirname(self.path))
         with open(self.path, 'w') as file:
             file.write(txt)
@@ -83,13 +83,13 @@ class CatalogFile(BaseFile):
     """Catalog file."""
     name = 'catalog'
 
-    def read(self, **kwargs):
-        """Read catalog."""
+    def load(self, **kwargs):
+        """Load catalog."""
         from mpytools import Catalog
         return Catalog.read(self.path, **kwargs)
 
-    def write(self, catalog, **kwargs):
-        """Write catalog."""
+    def save(self, catalog, **kwargs):
+        """Save catalog."""
         return catalog.write(self.path, **kwargs)
 
 
@@ -98,8 +98,8 @@ class PowerSpectrumFile(BaseFile):
     """Power spectrum file."""
     name = 'power'
 
-    def read(self, *select, mode='poles'):
-        """Read power spectrum."""
+    def load(self, *select, mode='poles'):
+        """Load power spectrum."""
         from pypower import MeshFFTPower, PowerSpectrumStatistics
         with utils.LoggingContext(level='warning'):
             toret = MeshFFTPower.load(self.path)
@@ -111,8 +111,8 @@ class PowerSpectrumFile(BaseFile):
             toret = toret.select(*select)
         return toret
 
-    def write(self, power):
-        """Write power spectrum."""
+    def save(self, power):
+        """Save power spectrum."""
         return power.save(self.path)
 
 
@@ -121,8 +121,8 @@ class CorrelationFunctionFile(BaseFile):
     """Correlation function file."""
     name = 'correlation'
 
-    def read(self, *select):
-        """Read correlation function."""
+    def load(self, *select):
+        """Load correlation function."""
         from pycorr import TwoPointCorrelationFunction
         with utils.LoggingContext(level='warning'):
             toret = TwoPointCorrelationFunction.load(self.path)
@@ -130,8 +130,8 @@ class CorrelationFunctionFile(BaseFile):
             toret = toret.select(*select)
         return toret
 
-    def write(self, corr):
-        """Write correlation function."""
+    def save(self, corr):
+        """Save correlation function."""
         return corr.save(self.path)
 
 
@@ -140,8 +140,8 @@ class BaseMatrixFile(BaseFile):
     """Power spectrum file."""
     name = 'wmatrix'
 
-    def read(self, mode='poles'):
-        """Read matrix."""
+    def load(self, mode='poles'):
+        """Load matrix."""
         from pypower import MeshFFTWindow, BaseMatrix
         toret = MeshFFTWindow.load(self.path)
         try:
@@ -150,8 +150,8 @@ class BaseMatrixFile(BaseFile):
             toret =  BaseMatrix.load(self.path)
         return toret
 
-    def write(self, matrix):
-        """Write matrix."""
+    def save(self, matrix):
+        """Save matrix."""
         return matrix.save(self.path)
 
 
@@ -160,20 +160,20 @@ class GenericFile(BaseFile):
     """Generic file."""
     name = 'generic'
 
-    def read(self, read, **kwargs):
-        """Read."""
-        for name in ['read', 'load']:
-            func = getattr(read, name, None)
+    def load(self, load, **kwargs):
+        """Load file."""
+        for name in ['load', 'read']:
+            func = getattr(load, name, None)
             if callable(func):
-                read = func
+                load = func
                 break
-        return read(self.path, **kwargs)
+        return load(self.path, **kwargs)
 
-    def write(self, write, **kwargs):
-        """Write."""
-        for name in ['write', 'save']:
-            func = getattr(write, name, None)
+    def save(self, save, **kwargs):
+        """Save file."""
+        for name in ['save', 'write']:
+            func = getattr(save, name, None)
             if callable(func):
-                write = func
+                save = func
                 break
-        write(self.path, **kwargs)
+        save(self.path, **kwargs)

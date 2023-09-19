@@ -39,7 +39,7 @@ def test_file_manager():
     fm.append(MyFileEntry(dict(description='added file', id='added_file_2', filetype='catalog', path='test_{option}.fits', options={'option': ['my_option']})))
     fm.append(dict(fileentry='my_file_entry', description='added file', id='added_file_3', filetype='catalog', path='test_{option}.fits', options={'option': ['my_option_2']}))
     fn = '_tests/test_file_manager2.yaml'
-    fm.write(fn)
+    fm.save(fn)
     fm = FileManager(database=fn, environ=dict(DESIPIPEENVDIR='.'))
     for fn in fm.select(filetype='catalog', id=['added_file_2', 'added_file_3']):
         assert 'my_option_and_custom_file_entry' in fn.get(id='added_file_2').filepath

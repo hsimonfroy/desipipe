@@ -371,25 +371,25 @@ class Task(BaseClass):
         from .file_manager import BaseFile
         t0 = time.time()
 
-        def write_attrs(file, base_dir):
+        def save_attrs(file, base_dir):
             dirname = os.path.join(base_dir, '.desipipe')
             utils.mkdir(dirname)
             script_fn = os.path.join(dirname, '{}.py'.format(self.app.name))
-            if 'code' in self.app.write_attrs:
+            if 'code' in self.app.save_attrs:
                 input_fn = getattr(self.app, 'filename', None)
                 if input_fn is not None and os.path.isfile(input_fn):
                     shutil.copyfile(input_fn, script_fn)
                 else:
                     with open(script_fn, 'w') as file:
                         file.write(self.app.code)
-            if 'versions' in self.app.write_attrs:
+            if 'versions' in self.app.save_attrs:
                 versions_fn = os.path.join(dirname, '{}.versions'.format(self.app.name))
                 with open(versions_fn, 'w') as file:
                     for name, version in self.app.versions().items():
                         file.write('{}={}\n'.format(name, version))
-            if 'cwd' in self.app.write_attrs:
+            if 'cwd' in self.app.save_attrs:
                 shutil.copytree(self.app.dirname, dirname, dirs_exist_ok=True)
-            return self.app.write_dir  # destination
+            return self.app.save_dir  # destination
 
         self.errno = 42
         try:
@@ -399,7 +399,7 @@ class Task(BaseClass):
             self.errno = getattr(exc, 'errno', 42)
             self.err = traceback.format_exc()
             return
-        BaseFile.write_attrs = write_attrs  # save main script and versions whenever a file is written to disk
+        BaseFile.save_attrs = save_attrs  # save main script and versions whenever a file is written to disk
         if hasattr(self, 'callback'):
             self.app.callback = self.callback
         self.errno, self.result, self.err, self.out, self.versions = self.app.run(**{**self_kwargs, **kwargs})
@@ -413,7 +413,7 @@ class Task(BaseClass):
             self.errno = getattr(exc, 'errno', 42)
             self.err = traceback.format_exc()
             return
-        BaseFile.write_attrs = None
+        BaseFile.save_attrs = None
         if self.errno:
             if self.errno == signal.SIGTERM:
                 self.state = TaskState.KILLED
@@ -1188,7 +1188,7 @@ class BaseApp(BaseClass):
     task_manager : TaskManager
         Task manager to which the task has been added.
     """
-    def __init__(self, func, task_manager=None, skip=False, name=None, write_attrs=('code', 'versions'), write_dir=None):
+    def __init__(self, func, task_manager=None, skip=False, name=None, save_attrs=('code', 'versions'), save_dir=None):
         """
         Initialize application, called by :class:`TaskManager` decorators :meth:`TaskManager.bash_app` and :meth:`TaskManager.python_app`.
 
@@ -1204,7 +1204,7 @@ class BaseApp(BaseClass):
             self.__dict__.update(func.__dict__)
             return
         self.add = {'skip': False, 'name': None}
-        self.update(func=func, task_manager=task_manager, skip=skip, name=name, write_attrs=write_attrs, write_dir=write_dir)
+        self.update(func=func, task_manager=task_manager, skip=skip, name=name, save_attrs=save_attrs, save_dir=save_dir)
 
     def update(self, **kwargs):
         """Update app with input attributes."""
@@ -1233,17 +1233,17 @@ class BaseApp(BaseClass):
                 if not isinstance(name, str):
                     name = self.name
                 self.add['name'] = name
-        if 'write_attrs' in kwargs:
-            self.write_attrs = kwargs.pop('write_attrs')
-            if isinstance(self.write_attrs, str):
-                self.write_attrs = (self.write_attrs,)
-            self.write_attrs = tuple(self.write_attrs)
-        if 'write_dir' in kwargs:
-            self.write_dir = kwargs.pop('write_dir')
-            if self.write_dir:
-                self.write_dir = str(self.write_dir)
+        if 'save_attrs' in kwargs:
+            self.save_attrs = kwargs.pop('save_attrs')
+            if isinstance(self.save_attrs, str):
+                self.save_attrs = (self.save_attrs,)
+            self.save_attrs = tuple(self.save_attrs)
+        if 'save_dir' in kwargs:
+            self.save_dir = kwargs.pop('save_dir')
+            if self.save_dir:
+                self.save_dir = str(self.save_dir)
             else:
-                self.write_dir = None
+                self.save_dir = None
         if kwargs:
             raise ValueError('Unrecognized arguments {}'.format(kwargs))
 
@@ -1267,7 +1267,7 @@ class BaseApp(BaseClass):
 
     def __getstate__(self):
         """Return app state."""
-        state = {name: getattr(self, name) for name in ['name', 'code', 'vartypes', 'dlocals', 'filename', 'dirname', 'write_attrs', 'write_dir', 'task_manager']}
+        state = {name: getattr(self, name) for name in ['name', 'code', 'vartypes', 'dlocals', 'filename', 'dirname', 'save_attrs', 'save_dir', 'task_manager']}
         return state
 
     def __setstate__(self, state):
