@@ -69,7 +69,7 @@ class TextFile(BaseFile):
     def load(self):
         """Load file."""
         with open(self.path, 'r') as file:
-            return file.load()
+            return file.read()
 
     def save(self, txt):
         """Save file."""
