@@ -284,6 +284,9 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     def __str__(self):
         return self.__fspath__()
 
+    def __hash__(self):
+        return hash(self.__fspath__())
+
     def __repr__(self):
         """String representation: class name and attributes."""
         di = self.to_dict()
