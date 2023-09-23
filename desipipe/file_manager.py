@@ -63,13 +63,15 @@ class BaseMutableClass(BaseClass):
         **kwargs : dict
             Optionally, more attributes.
         """
-        if len(args) > 1:
-            raise ValueError('Cannot take several args')
         if len(args):
             if isinstance(args[0], self.__class__):
                 self.__dict__.update(args[0].__dict__)
                 return
-            kwargs = {**args[0], **kwargs}
+            try:
+                kwargs = {**args[0], **kwargs}
+            except TypeError:
+                args = dict(zip(self._defaults, args))
+                kwargs = {**args, **kwargs}
         for name, value in self._defaults.items():
             setattr(self, name, copy.copy(value))
         self.update(**kwargs)
@@ -217,12 +219,12 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
 
     Attributes
     ----------
-    filetype : str, default=''
-        BaseFile type, e.g. 'catalog', 'power', etc.
-
     path : str, default=''
         Path to file(s). May contain placeholders, e.g. 'data_{tracer}_{region}.fits',
         with the list of values that ``tracer``, ``region`` may take specified in ``options`` (see below).
+
+    filetype : str, default=''
+        BaseFile type, e.g. 'catalog', 'power', etc.
 
     id : str, default=''
         BaseFile (unique) identifier.
@@ -236,7 +238,7 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     description : str, default=''
         Plain text describing the file(s).
     """
-    _defaults = dict(filetype='generic', path='', id='', author='', options=dict(), foptions=dict(), description='')
+    _defaults = dict(path='', filetype='generic', id='', author='', options=dict(), foptions=dict(), description='')
 
     def update(self, **kwargs):
         """Update input attributes."""
@@ -327,12 +329,12 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
 
     Attributes
     ----------
-    filetype : str, default=''
-        BaseFile type, e.g. 'catalog', 'power', etc.
-
     path : str, default=''
         Path to file(s). May contain placeholders, e.g. 'data_{tracer}_{region}.fits',
         with the list of values that ``tracer``, ``region`` may take specified in ``options`` (see below).
+
+    filetype : str, default=''
+        BaseFile type, e.g. 'catalog', 'power', etc.
 
     id : str, default=''
         BaseFile (unique) identifier.
@@ -347,7 +349,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         Plain text describing the file(s).
     """
     name = 'base'
-    _defaults = dict(filetype='generic', path='', id='', author='', options=dict(), foptions=dict(), description='')
+    _defaults = dict(path='', filetype='generic', id='', author='', options=dict(), foptions=dict(), description='')
     _file_cls = BaseFile
 
     def update(self, **kwargs):
@@ -383,7 +385,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         ignore : bool, list, default=False
             If ``True``, ignore input options that are not in these entry's options.
             If list, do not apply a filter for these input options.
-        
+
         check_exists : bool, default=False
             If ``True``, check whether all files exist; if not, raise a :class:`FileNotFoundError`.
 
@@ -416,7 +418,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                 if raise_error: raise FileNotFoundError('file {} not found.'.format(exists[False]))
                 return None
         return toret
-            
+
 
     def get(self, *args, raise_error=True, **kwargs):
         """
@@ -481,7 +483,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         exclude : str, list, default=None
             List of options to exclude in the iteration.
             ``None`` to not exclude any option.
-        
+
         return_foptions : bool, default=False
             If ``True``, return list of ``(options, foptions)``,
             where ``foptions`` are the options to be passed to the formatted path.
@@ -502,7 +504,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                 toret.append((options, foptions))
             else:
                 toret.append(options)
-        
+
         return toret
 
     def iter(self, include=None, exclude=None):
