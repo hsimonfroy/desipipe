@@ -1344,6 +1344,9 @@ class MyStream(object):
         self._log.seek(0)
         self._log.truncate(0)
 
+    def isatty(self):
+        return False
+
     def __del__(self):
         pass
         #self._log.close()
