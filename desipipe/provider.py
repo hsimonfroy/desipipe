@@ -202,7 +202,8 @@ class SlurmProvider(BaseProvider):
     """
     name = 'slurm'
     _defaults = dict(account='desi', constraint='cpu', qos='regular', time='01:00:00', nodes_per_worker=1., mpiprocs_per_worker=1,
-                     output='/dev/null', error='/dev/null', mpiexec='srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', signal='SIGTERM@15')
+                     output='/dev/null', error='/dev/null', mpiexec='srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', signal='SIGTERM@15',
+                     kwargs=dict())
 
     @classmethod
     def jobid(cls):
@@ -227,10 +228,11 @@ class SlurmProvider(BaseProvider):
             cmd = ' & '.join(cmd)
             if workers: cmd += ' & wait'
         cmd = self.environ.to_script(sep=' ; ') + ' ; ' + cmd
+        kwargs = []
+        for name, value in self.kwargs.items(): kwargs += ['--{}'.format(name), str(value)]
         # -- parsable to get jobid (optionally, cluster name)
         # -- wrap to pass the job
-        cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--signal', str(self.signal), '--parsable', '--wrap', cmd]
-        # print(' '.join(cmd))
+        cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--signal', str(self.signal), '--parsable'] + kwargs + ['--wrap', cmd]
         proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         self.processes.append((proc.stdout.split(',')[0].strip(), nodes, workers))  # jobid, workers
 
@@ -286,6 +288,9 @@ class NERSCProvider(SlurmProvider):
         super(NERSCProvider, self).__init__(*args, **kwargs)
         self.max_mpiprocs_per_node = 128
         self.nodes_per_worker = max(self.nodes_per_worker, self.mpiprocs_per_worker * 1. / self.max_mpiprocs_per_node)
+        if self.constraint == 'gpu':
+            if not self.account.endswith('_g'): self.account += '_g'
+            if 'gpus-per-node' not in self.kwargs: self.kwargs['gpus-per-node'] = 4
 
     def cost(self, workers=1):
         """Cost required for input number of workers (in addition to running ones)."""
