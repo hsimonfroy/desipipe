@@ -63,6 +63,10 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
             else:
                 raise ValueError('Unknown argument {}; supports {}'.format(name, list(self._defaults)))
 
+    def jobids(self):
+        """Current job IDs."""
+        return []
+
     def nrunning(self):
         """Number of running workers."""
         return 0
@@ -235,6 +239,10 @@ class SlurmProvider(BaseProvider):
         cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--signal', str(self.signal), '--parsable'] + kwargs + ['--wrap', cmd]
         proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         self.processes.append((proc.stdout.split(',')[0].strip(), nodes, workers))  # jobid, workers
+
+    def jobids(self):
+        """Current job IDs."""
+        return [process[0] for process in self.processes]
 
     def nrunning(self, of='workers'):
         """Number of running workers."""

@@ -107,6 +107,7 @@ def test_queue(spawn=True, run=False):
     queue.pause()
     time.sleep(5)
     queue.resume()
+    print('processes', queue.processes())
 
     @tm2.python_app
     def error():
@@ -183,7 +184,7 @@ def test_file(spawn=True):
 
 def test_mpi():
 
-    from desipipe import setup_logging, spawn
+    from desipipe import setup_logging
     setup_logging()
 
     queue = Queue('test3', base_dir=base_dir)
@@ -197,5 +198,5 @@ if __name__ == '__main__':
     #test_app()
     test_queue(spawn=True, run=False)
     #test_cmdline()
-    test_file(spawn=True)
+    #test_file(spawn=True)
     #test_mpi()

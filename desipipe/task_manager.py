@@ -605,6 +605,11 @@ class Queue(BaseClass):
                 -- Add foreign key constraints
                     FOREIGN KEY(mid) REFERENCES tasks(mid)
                 );
+                -- Process table
+                CREATE TABLE processes (
+                    pid      TEXT,             -- process id
+                    provider TEXT              -- provider
+                );
                 -- Metadata about this queue, e.g. active/paused
                 CREATE TABLE metadata (
                     key   TEXT,
@@ -706,6 +711,14 @@ class Queue(BaseClass):
         # """Add input :class:`TaskManager` to the data base (or replace if already there, as specified by :attr:`TaskManager.id`)."""
         query = 'INSERT OR REPLACE INTO managers (mid, manager) VALUES (?, ?)'
         self._query([query, (manager.id, TaskManagerPickler.dumps(manager))])
+        self.db.commit()
+
+    def _add_process(self, pid, provider):
+        # """Add input process id to the data base (or replace if already there)."""
+        query = 'INSERT OR REPLACE INTO processes (pid, provider) VALUES (?, ?)'
+        pid = str(pid)
+        provider = str(getattr(provider, 'name', provider))
+        self._query([query, (pid, provider)])
         self.db.commit()
 
     def add(self, tasks, replace=False):
@@ -1066,8 +1079,6 @@ class Queue(BaseClass):
         if one:
             query += ' WHERE mid="{}"'.format(mid)
         managers = self._query(query).fetchall()
-        if managers is None:
-            return None
         toret = []
         for manager in managers:
             mid, manager = manager
@@ -1078,6 +1089,11 @@ class Queue(BaseClass):
         if one:
             return toret[0]
         return toret
+
+    def processes(self):
+        """List processes that have been launched."""
+        query = 'SELECT pid, provider FROM processes'
+        return self._query(query).fetchall()
 
     def counts(self, state=None, mid=None):
         """
@@ -1610,19 +1626,15 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     try:
         from mpi4py import MPI
     except ImportError:
-        MPI = mpicomm = mpicomm_bak = None
+        MPI = mpicomm = None
     else:
-        mpicomm_bak = MPI.COMM_WORLD
         if mpicomm is None:
             mpicomm = MPI.COMM_WORLD
-    
+
     #ti = time.time()
     def exit_killed(signal_number, stack_frame):
         global killed
         killed = True
-        #mpicomm_all.barrier()
-        #print('KILLED', time.time() - ti)
-        #print('KILLED', mpicomm_bak.rank, mpicomm_bak.size, mpicomm.rank, signal_number, datetime.now().strftime("%H:%M:%S"))
         if mpicomm is None or mpicomm.rank == 0:
             if task is not None:
                 #print('KILLEDTASK', mpicomm_bak.rank, mpicomm_bak.size, mpicomm.rank)
@@ -1630,17 +1642,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
                     state = TaskState.KILLED
                 else:
                     state = TaskState.PENDING  # automatically propose new task
-                #query = 'UPDATE tasks SET state=? WHERE tid=?'
-                #queue._query([query, (state, task.id)])
-                #queue.db.commit()
-                #state = TaskState.KILLED
                 queue.set_task_state(task.id, state)
-                #query = 'UPDATE tasks SET state=? WHERE tid=?'
-                #queue._query([query, (state, task.id)])
-                #queue.db.commit()
-                #print('KILLEDTASK', mpicomm_bak.rank, mpicomm_bak.size, mpicomm.rank, signal_number, datetime.now().strftime("%H:%M:%S"))
-        #if MPI is not None:
-        #    MPI.COMM_WORLD = mpicomm_bak
         if signal_number == signal.SIGINT:
             exit()
 
@@ -1648,10 +1650,10 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     task = None
     itask = 0
 
-    #signal.signal(signal.SIGINT, exit_killed)
+    signal.signal(signal.SIGINT, exit_killed)
     signal.signal(signal.SIGTERM, exit_killed)
 
-    mpicomm_all = mpicomm
+    #mpicomm_all = mpicomm
     if mpisplits is not None:
         if mpicomm is None:
             raise ImportError('mpicomm not defined')
@@ -1677,6 +1679,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     if provider is not None:
         provider = get_provider(provider)
         jobid = provider.jobid()
+        queue._add_process(jobid, provider=provider)
 
     while True:
         stask = task = None
@@ -1751,6 +1754,7 @@ def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=Fa
             stop = True
         nsteps += 1
         for queue, managers in zip(queues, qmanagers):
+            queue._add_process(os.getpid(), provider='local')
             if queue.paused:
                 continue
             if mode == 'stop_at_error' and queue.counts(state=TaskState.FAILED):
@@ -1768,11 +1772,13 @@ def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=Fa
                 if ntasks:
                     # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
                     manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=ntasks)
+                    for jobid in manager.provider.jobids():
+                        queue._add_process(jobid, provider=manager.provider)
         time.sleep(timestep * random.uniform(0.8, 1.2))
     # print('TERMINATED')
 
 
-def kill(queue=None, provider=None, jobid=None, state=None, **kwargs):
+def kill(queue=None, all=False, provider=None, jobid=None, state=None, **kwargs):
     """
     Kill launched jobs.
 
@@ -1781,6 +1787,9 @@ def kill(queue=None, provider=None, jobid=None, state=None, **kwargs):
     queue : Queue, list, default=None
         Queue or list of queues to process.
         If ``None``, ``jobid`` must be provided.
+
+    all : bool, default=False
+        If ``True``, kill all processes registered in this queue.
 
     provider : BaseProvider, str, dict, default=None
         To access :meth:`BaseProvider.kill` method.
@@ -1816,6 +1825,9 @@ def kill(queue=None, provider=None, jobid=None, state=None, **kwargs):
                 if not bool(task.jobid): continue
                 if provider is not None and provider.__class__ is not task.app.task_manager.provider.__class__: continue
                 task.app.task_manager.provider.kill(task.jobid)
+            if all:
+                for pid, provider in queue.processes():
+                    get_provider(provider).kill(pid)
 
 
 def retry(queue, **kwargs):
@@ -1955,6 +1967,7 @@ def action_from_args(action='work', args=None):
 
     if action == 'kill':
         parser.add_argument('-q', '--queue', nargs='*', type=str, required=False, default=None, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
+        parser.add_argument('--all', action='store_true', help='To kill all processes (manager and worker) associated with the queue')
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--tid', type=str, nargs='*', required=False, default=None, help='Task ID')
         parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
@@ -1962,7 +1975,7 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--provider', type=str, required=False, default=None, help='Provider')
         parser.add_argument('--state', type=str, required=False, default=TaskState.RUNNING, choices=TaskState.ALL, help='Task state')
         args = parser.parse_args(args=args)
-        return kill(queue=args.queue, provider=args.provider, jobid=args.jobid, state=args.state, tid=args.tid, mid=args.mid)
+        return kill(queue=args.queue, all=args.all, provider=args.provider, jobid=args.jobid, state=args.state, tid=args.tid, mid=args.mid)
 
     parser.add_argument('-q', '--queue', nargs='*', type=str, required=True, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
 
