@@ -1,16 +1,12 @@
-#!/usr/bin/env python
+import os
 import time
-from mpi4py import MPI
 
-try:
-    raise MPI.Exception
-    mpicomm = MPI.Comm.Get_parent()
-    mpicomm.size
-except MPI.Exception:
-    mpicomm = MPI.COMM_WORLD
-    size = mpicomm.Get_size()
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+import numpy as np
 
-rank = mpicomm.Get_rank()
-print('START')
-time.sleep(3)
-print(rank, mpicomm.size)
+t0 = time.time()
+shape = (500, 500)
+for i in range(200):
+    np.linalg.inv(np.random.uniform(0., 1., shape))
+print('TERMINATED', time.time() - t0)

@@ -258,7 +258,14 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         def fstr(template, kwargs):
             return eval(f"f'{template}'", dict(), kwargs)
 
-        return fstr(path, self.foptions)
+        path = fstr(path, self.foptions)
+        if '*' in path:
+            exist = glob.glob(path)
+            if len(exist) == 1:
+                return exist[0]
+            if len(exist) > 1:
+                raise ValueError('found multiple paths for {}: {}'.format(path, exist))
+        return path
 
     def load(self, *args, **kwargs):
         """Load file from disk."""
@@ -355,8 +362,9 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
     def update(self, **kwargs):
         """Update input attributes (options values are turned into lists)."""
         super(BaseFileEntry, self).update(**kwargs)
+        foptions = {}
         if 'options' in kwargs:
-            options, foptions = {}, {}
+            options = {}
             for name, values in kwargs['options'].items():
                 if values is None or values is Ellipsis:
                     values = Ellipsis
@@ -368,9 +376,10 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                 options[name] = values = _make_list_options(values)
             self.options, self.foptions = options, foptions
         if 'foptions' in kwargs:
-            self.foptions = dict(kwargs['foptions'])
+            self.foptions = {**foptions, **kwargs['foptions']}
         for name, values in self.options.items():
             self.foptions.setdefault(name, values)
+        self.foptions = {name: value for name, value in self.foptions.items() if name in self.options}
 
     def select(self, ignore=False, check_exists=False, raise_error=True, **kwargs):
         """
