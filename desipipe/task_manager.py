@@ -1639,7 +1639,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         if mpicomm is None or mpicomm.rank == 0:
             if task is not None:
                 #print('KILLEDTASK', mpicomm_bak.rank, mpicomm_bak.size, mpicomm.rank)
-                if itask < 1 or signal_number == signal.SIGINT:
+                if itask < 1 or signal_number in (signal.SIGINT, signal.SIGOOM):
                     state = TaskState.KILLED
                 else:
                     state = TaskState.PENDING  # automatically propose new task
@@ -1651,8 +1651,10 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     task = None
     itask = 0
 
+    signal.SIGOOM = 253  # slurm out-of-memory
     signal.signal(signal.SIGINT, exit_killed)
     signal.signal(signal.SIGTERM, exit_killed)
+    signal.signal(signal.SIGOOM, exit_killed)
 
     #mpicomm_all = mpicomm
     if mpisplits is not None:
