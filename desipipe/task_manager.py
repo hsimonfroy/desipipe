@@ -592,7 +592,7 @@ class Queue(BaseClass):
                 );
                 -- Dependencies table.  Multiple entries for multiple deps.
                 CREATE TABLE requires (
-                    tid      TEXT,     -- task.id foreign key
+                    tid     TEXT,      -- task.id foreign key
                     require TEXT,      -- task.id that it depends upon
                 -- Add foreign key constraints
                     FOREIGN KEY(tid) REFERENCES tasks(tid),
@@ -600,7 +600,7 @@ class Queue(BaseClass):
                 );
                 -- Task manager table
                 CREATE TABLE managers (
-                    mid    TEXT PRIMARY KEY, -- task manager id foreign key
+                    mid     TEXT PRIMARY KEY, -- task manager id foreign key
                     manager TEXT,             -- task manager
                 -- Add foreign key constraints
                     FOREIGN KEY(mid) REFERENCES tasks(mid)
@@ -608,7 +608,8 @@ class Queue(BaseClass):
                 -- Process table
                 CREATE TABLE processes (
                     pid      TEXT,             -- process id
-                    provider TEXT              -- provider
+                    provider TEXT,             -- provider
+                    PRIMARY KEY (pid, provider)
                 );
                 -- Metadata about this queue, e.g. active/paused
                 CREATE TABLE metadata (
