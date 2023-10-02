@@ -142,7 +142,10 @@ class LocalProvider(BaseProvider):
         """Kill input job IDs."""
         import signal
         for jobid in jobids:
-            os.kill(int(jobid), signal.SIGTERM)
+            try:
+                os.kill(int(jobid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
 
     def __call__(self, cmd, workers=1):
         """Submit input command ``cmd`` on ``workers`` workers."""
