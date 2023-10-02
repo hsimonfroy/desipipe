@@ -1106,6 +1106,15 @@ class FileManager(FileEntryCollection):
             return [fm.get() for fm in fms]
         return fms
 
+    def __getitem__(self, index):
+        """Return files at the input index(ices) in the list."""
+        li = self.iter()
+        if utils.is_sequence(index):
+            data = [li[ii] for ii in index]
+        else:
+            data = li[index]
+        return data
+
     def __iter__(self):
         """
         Iterate over options that are common to all file entries (:attr:`options`),
