@@ -396,7 +396,7 @@ class Task(BaseClass):
             # make copy of kwargs to avoid in-place modification and potientially pickling error
             self_kwargs = TaskUnpickler.loads(TaskPickler.dumps(self.kwargs))
         except Exception as exc:
-            self.errno = getattr(exc, 'errno', 42)
+            self.errno = getattr(exc, 'errno', None) or self.errno
             self.err = traceback.format_exc()
             return
         BaseFile.save_attrs = save_attrs  # save main script and versions whenever a file is written to disk
@@ -410,7 +410,7 @@ class Task(BaseClass):
         try:
             TaskPickler.dumps(self.result)  # to test pickling; the rest should be safe (producted by desipipe)
         except Exception as exc:
-            self.errno = getattr(exc, 'errno', 42)
+            self.errno = getattr(exc, 'errno', None) or self.errno
             self.err = traceback.format_exc()
             return
         BaseFile.save_attrs = None
@@ -1401,7 +1401,7 @@ class PythonApp(BaseApp):
             try:
                 result = self._run(**kwargs)
             except Exception as exc:
-                errno = getattr(exc, 'errno', 42)
+                errno = getattr(exc, 'errno', None) or 42
                 traceback.print_exc(file=_serr)
                 # raise exc
             versions = self.versions()
