@@ -1068,7 +1068,7 @@ class FileManager(FileEntryCollection):
         get : bool, default=None
             If ``False``, return a list of :class:`FileManager` instances.
             If ``True``, call :meth:`FileManager.get` to return a list of :class:`BaseFile` instances.
-            If ``None``, and there are single options in :class:`FileManager` instances,
+            If ``None``, exclude is ``None``, and there are single options in :class:`FileManager` instances,
             call :meth:`FileManager.get` to return a list of :class:`BaseFile` instances.
 
         intersection : bool, default=True
@@ -1092,7 +1092,7 @@ class FileManager(FileEntryCollection):
                 fms.append(fm)
         if get is False:
             return fms
-        if get is None:
+        if get is None and exclude is None:
             for fm in fms:
                 if len(fm.data) == 1:
                     options = fm.data[0].options
