@@ -838,7 +838,7 @@ class FileEntryCollection(BaseClass):
         return len(self.data)
 
     def _get_file_entry(self, entry):
-        """Turn ``entry`` may be e.g. a dictionary, or a :class:`BaseFileEntry` instance, in a :class:`BaseFileEntry` instance."""
+        """``entry`` may be e.g. a dictionary, or a :class:`BaseFileEntry` instance, in a :class:`BaseFileEntry` instance."""
         entry = get_file_entry(entry, file_entry_collection=self)
         entry.environ = self.environ
         return entry

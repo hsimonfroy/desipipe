@@ -1347,7 +1347,7 @@ class MyStream(object):
         self._stream.flush()
 
     def write(self, message, **kwargs):
-        self._stream.write(message, **kwargs)
+        if _stream_out_err: self._stream.write(message, **kwargs)
         self._log.write(message)
         if self.callback is not None:
             self.callback()
@@ -1368,7 +1368,7 @@ class MyStream(object):
         pass
         #self._log.close()
 
-
+_stream_out_err = True
 _sout, _serr = MyStream(sys.stdout), MyStream(sys.stderr)
 
 
@@ -1445,12 +1445,12 @@ class BashApp(BaseApp):
         # but we wouldn't have been able to write task.out and err in the queue live from a thread
         # Here out will be written first, then err; which is fine in most cases
         for line in proc.stdout:
-            print(line[:-1])
+            if _stream_out_err: print(line[:-1])
             out += line
             if callback is not None:
                 callback(out, '')
         for line in proc.stderr:
-            print(line[:-1])
+            if _stream_out_err: print(line[:-1])
             err += line
         while True:
             errno = proc.poll()
@@ -1684,6 +1684,8 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         jobid = provider.jobid()
         queue._add_process(jobid, provider=provider)
 
+    global _stream_out_err
+
     while True:
         stask = task = None
         # print(queue.summary(), queue.counts(state='PENDING'))
@@ -1693,9 +1695,11 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
             if task is not None:  # can be None if no task to pop
                 queue.set_task_state(task.id, TaskState.RUNNING)
                 queue.set_task_jobid(task.id, task.jobid)
+                _stream_out_err = task.app.task_manager.provider.name != 'local'
             stask = TaskPickler.dumps(task, reduce_app=None)
         if mpicomm is not None:
             stask = mpicomm.bcast(stask, root=0)
+            _stream_out_err = mpicomm.bcast(_stream_out_err, root=0)
         #task_in = TaskUnpickler.loads(stask)
         task = TaskUnpickler.loads(stask)
         if task is None:

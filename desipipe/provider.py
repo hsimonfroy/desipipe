@@ -252,14 +252,19 @@ class SlurmProvider(BaseProvider):
         allowed_of = ['workers', 'nodes']
         if of not in allowed_of:
             raise ValueError('of must be one of {}, found {}'.format(allowed_of, of))
-        sqs = subprocess.run(['sqs'], check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')
-        istate = sqs[0].index('ST')
-        jobids = []
-        for line in sqs[1:]:
-            if line:
-                state = line[istate:]
-                if not state.startswith('CG'):
-                    jobids.append(line.split()[0].strip())
+        try:
+            sqs = subprocess.run(['sqs'], check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')
+        except subprocess.CalledProcessError:
+            jobids = getattr(self, '_jobids', [])
+        else:
+            istate = sqs[0].index('ST')
+            jobids = []
+            for line in sqs[1:]:
+                if line:
+                    state = line[istate:]
+                    if not state.startswith('CG'):
+                        jobids.append(line.split()[0].strip())
+            self._jobids = jobids
         # print(jobids, self.processes)
         if of == 'workers':
             return sum(workers * (jobid in jobids) for jobid, nodes, workers in self.processes)

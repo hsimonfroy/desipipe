@@ -55,6 +55,7 @@ def test_queue(spawn=True, run=False):
 
     @tm.python_app
     def fraction(a, *args, co=common2, **kwargs):
+        print('FRACTION')
         return co(**kwargs)
 
     @tm2.bash_app
