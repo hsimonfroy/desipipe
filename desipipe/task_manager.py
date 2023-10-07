@@ -1347,7 +1347,8 @@ class MyStream(object):
         self._stream.flush()
 
     def write(self, message, **kwargs):
-        if _stream_out_err: self._stream.write(message, **kwargs)
+        if _stream_out_err:
+            self._stream.write(message, **kwargs)
         self._log.write(message)
         if self.callback is not None:
             self.callback()

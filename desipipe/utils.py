@@ -31,7 +31,7 @@ def mkdir(dirname, **kwargs):
         return
 
 
-def setup_logging(level=logging.INFO, stream=sys.stdout, filename=None, filemode='w', **kwargs):
+def setup_logging(level=logging.INFO, stream=None, filename=None, filemode='w', **kwargs):
     """
     Set up logging.
 
@@ -64,6 +64,8 @@ def setup_logging(level=logging.INFO, stream=sys.stdout, filename=None, filemode
         level = {'info': logging.INFO, 'debug': logging.DEBUG, 'warning': logging.WARNING}[level.lower()]
     for handler in logging.root.handlers:
         logging.root.removeHandler(handler)
+    if stream is None:
+        stream = sys.stdout
 
     t0 = time.time()
 

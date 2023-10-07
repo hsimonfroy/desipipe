@@ -56,6 +56,10 @@ def test_queue(spawn=True, run=False):
     @tm.python_app
     def fraction(a, *args, co=common2, **kwargs):
         print('FRACTION')
+        import logging
+        from desipipe.utils import setup_logging
+        setup_logging('info')
+        logging.getLogger('FRACTION').info('logged')
         return co(**kwargs)
 
     @tm2.bash_app
