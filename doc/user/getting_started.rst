@@ -191,6 +191,12 @@ Kill tasks
 
 Kills running tasks.
 
+.. code-block:: bash
+
+  desipipe kill -q my_queue --all
+
+Kills all processes related to this queue (including manager processes).
+
 Delete queue(s)
 ~~~~~~~~~~~~~~~
 
