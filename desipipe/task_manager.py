@@ -1205,7 +1205,7 @@ class BaseApp(BaseClass):
     task_manager : TaskManager
         Task manager to which the task has been added.
     """
-    def __init__(self, func, task_manager=None, skip=False, name=None, state=tuple(), save_attrs=('code', 'versions'), save_dir=None):
+    def __init__(self, func, task_manager=None, skip=False, name=None, state=None, save_attrs=('code', 'versions'), save_dir=None):
         """
         Initialize application, called by :class:`TaskManager` decorators :meth:`TaskManager.bash_app` and :meth:`TaskManager.python_app`.
 
@@ -1221,7 +1221,7 @@ class BaseApp(BaseClass):
             self.__dict__.update(func.__dict__)
             return
         self.add = {'skip': False, 'name': None, 'state': tuple()}
-        self.update(func=func, task_manager=task_manager, skip=skip, name=name, save_attrs=save_attrs, save_dir=save_dir)
+        self.update(func=func, task_manager=task_manager, skip=skip, name=name, state=state, save_attrs=save_attrs, save_dir=save_dir)
 
     def update(self, **kwargs):
         """Update app with input attributes."""
@@ -1286,9 +1286,6 @@ class BaseApp(BaseClass):
             tid, state = queue.tasks(name=self.add['name'], index=self.index, property=('tid', 'state'))
             if state in self.add['state']:
                 return Future(queue=queue, tid=tid)
-            else:
-                self = self.copy()
-                self.name = self.add['name']
         kwargs = inspect.getcallargs(self.func, *args, **kwargs)
         task = Task(self, kwargs)
         return queue.add(task, replace=None)
@@ -1633,14 +1630,21 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         if mpicomm is None:
             mpicomm = MPI.COMM_WORLD
 
+    killed_at_timeout = None
+
     #ti = time.time()
     def exit_killed(signal_number, stack_frame):
         global killed
         killed = True
         if mpicomm is None or mpicomm.rank == 0:
             if task is not None:
-                #print('KILLEDTASK', mpicomm_bak.rank, mpicomm_bak.size, mpicomm.rank)
-                if itask < 1 or signal_number in (signal.SIGINT,):
+                if signal_number in (signal.SIGINT,):
+                    state = TaskState.KILLED
+                elif killed_at_timeout is True:
+                    state = TaskState.KILLED
+                elif killed_at_timeout is False:
+                    state = TaskState.PENDING
+                elif itask < 1:
                     state = TaskState.KILLED
                 else:
                     state = TaskState.PENDING  # automatically propose new task
@@ -1697,10 +1701,13 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
                 queue.set_task_state(task.id, TaskState.RUNNING)
                 queue.set_task_jobid(task.id, task.jobid)
                 _stream_out_err = task.app.task_manager.provider.name != 'local'
+                killed_at_timeout = getattr(task.app.task_manager.provider, 'killed_at_timeout', None)
             stask = TaskPickler.dumps(task, reduce_app=None)
         if mpicomm is not None:
             stask = mpicomm.bcast(stask, root=0)
+            killed_at_timeout = mpicomm.bcast(killed_at_timeout, root=0)
             _stream_out_err = mpicomm.bcast(_stream_out_err, root=0)
+
         #task_in = TaskUnpickler.loads(stask)
         task = TaskUnpickler.loads(stask)
         if task is None:
