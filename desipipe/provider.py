@@ -59,7 +59,10 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
                 from .environment import get_environ
                 self.environ = get_environ(value)
             elif name in self._defaults:
-                setattr(self, name, type(self._defaults[name])(value))
+                vt = type(self._defaults[name])
+                try: value = vt(value)
+                except TypeError: pass
+                setattr(self, name, value)
             else:
                 raise ValueError('Unknown argument {}; supports {}'.format(name, list(self._defaults)))
 

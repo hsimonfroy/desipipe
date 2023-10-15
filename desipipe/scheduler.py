@@ -43,7 +43,10 @@ class BaseScheduler(BaseClass, metaclass=RegisteredScheduler):
             self.provider = kwargs.pop('provider', None)
         for name, value in kwargs.items():
             if name in self._defaults:
-                setattr(self, name, type(self._defaults[name])(value))
+                vt = type(self._defaults[name])
+                try: value = vt(value)
+                except TypeError: pass
+                setattr(self, name, value)
             else:
                 raise ValueError('Unrecognized argument {}; supports {}'.format(name, list(self._defaults)))
 
