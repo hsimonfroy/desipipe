@@ -379,7 +379,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
             self.foptions = {**foptions, **kwargs['foptions']}
         for name, values in self.options.items():
             self.foptions.setdefault(name, values)
-        self.foptions = {name: value for name, value in self.foptions.items() if name in self.options}
+        self.foptions = {name: _make_list_options(value) for name, value in self.foptions.items() if name in self.options}
 
     def select(self, ignore=False, check_exists=False, raise_error=True, **kwargs):
         """
