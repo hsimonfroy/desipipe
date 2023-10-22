@@ -25,11 +25,11 @@ def test_file_manager():
     assert len(fm.select(zrange=[1., 1.2])) == 2
     assert len(fm.select(zrange=[1., 1.2], ignore=True)) == len(fm)
     for fn in fm.select(filetype='catalog', tracer='ELG', ignore=['tracer']).iter(exclude='tracer'):
-        fn.get(tracer='LRG')
+        assert str(fn.get(tracer='LRG') / 'test.npy').endswith('.npy')
     di = {}
     for fn in fm.select(filetype='catalog'):
         assert fn == fn
-        print(fn.filepath)
+        print(fn.filepath, fn.parent.filepath, fn.name.filepath, fn.stem.filepath, fn.suffix)
         di[fn] = None  # to test if hashable
     for options in fm.iter_options(intersection=False):
         print(options)

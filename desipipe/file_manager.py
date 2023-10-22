@@ -90,6 +90,13 @@ class BaseMutableClass(BaseClass):
             else:
                 raise ValueError('Unknown argument {}; supports {}'.format(name, list(self._defaults)))
 
+    def deepcopy(self):
+        """Return a deep copy."""
+        new = self.copy()
+        for name, value in self._defaults.items():
+            setattr(new, name, copy.copy(getattr(self, name, value)))
+        return new
+
     def to_dict(self):
         """View as a dictionary (of attributes)."""
         return {name: getattr(self, name) for name in self._defaults}
@@ -100,7 +107,7 @@ class BaseMutableClass(BaseClass):
     def __getstate__(self):
         return dict(self.__dict__)
 
-    def __setstate(self, state):
+    def __setstate__(self, state):
         self.__dict__.update(state)
 
 
@@ -314,6 +321,63 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         di.pop('foptions')
         #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
+
+    def __truediv__(self, other):
+        """Return ``self/other``, including a separator."""
+        new = self.deepcopy()
+        if isinstance(other, BaseFile):
+            new.path = os.path.join(self.path, other.path)
+        else:
+            new.path = os.path.join(self.path, other)
+        return new
+
+    def __itruediv__(self, other):
+        """Return other/self, including a separator."""
+        new = self.deepcopy()
+        new.path = os.path.join(other, self.path)
+        return new
+
+    def dirname(self):
+        """Return ``os.path.dirname(self)``."""
+        new = self.deepcopy()
+        new.path = os.path.dirname(self.path)
+        return new
+
+    def basename(self):
+        """Return ``os.path.basename(self)``."""
+        new = self.deepcopy()
+        new.path = os.path.basename(self.path)
+        return new
+
+    def stemname(self):
+        """Return ``os.path.splitext(self)[0]``."""
+        new = self.deepcopy()
+        new.path = os.path.splitext(self.path)[0]
+        return new
+
+    def extname(self):
+        """Return ``os.path.splitext(self)[1]``."""
+        return os.path.splitext(self.__fspath__())[1]
+
+    @property
+    def parent(self):
+        """Equivalent of :meth:`dirname`, following https://docs.python.org/fr/3/library/pathlib.html."""
+        return self.dirname()
+
+    @property
+    def name(self):
+        """Equivalent of :meth:`basename`, following https://docs.python.org/fr/3/library/pathlib.html."""
+        return self.basename()
+
+    @property
+    def stem(self):
+        """Equivalent of :meth:`stemname`, following https://docs.python.org/fr/3/library/pathlib.html."""
+        return self.stemname()
+
+    @property
+    def suffix(self):
+        """Equivalent of :meth:`extname`, following https://docs.python.org/fr/3/library/pathlib.html."""
+        return self.extname()
 
 
 class RegisteredFileEntry(type(BaseMutableClass)):

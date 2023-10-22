@@ -155,6 +155,34 @@ class BaseMatrixFile(BaseFile):
         return matrix.save(self.path)
 
 
+class ChainFile(BaseFile):
+
+    """Chain file."""
+
+    def load(self):
+        """Load chain."""
+        from desilike.samples import Chain
+        return Chain.load(self.path)
+
+    def save(self, chain):
+        """Save chain."""
+        return chain.save(self.path)
+
+
+class ProfilesFile(BaseFile):
+
+    """Profiles file."""
+
+    def load(self):
+        """Load profiles."""
+        from desilike.samples import Profiles
+        return Profiles.load(self.path)
+
+    def save(self, profiles):
+        """Save profiles."""
+        return profiles.save(self.path)
+
+
 class GenericFile(BaseFile):
 
     """Generic file."""
