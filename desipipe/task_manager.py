@@ -53,6 +53,14 @@ class SerializationError(Exception): pass
 class DeserializationError(Exception): pass
 
 
+def unique_id(uid):
+    """Return ~ unique ID from input object."""
+    if not isinstance(uid, bytes):
+        uid = pickle.dumps(uid)
+    hex = hashlib.md5(uid).hexdigest()
+    return str(uuid.UUID(hex=hex))
+
+
 def reduce_app(self):
     """Special reduce method for :class:`BaseApp`, dropping :attr:`task_manager`."""
     state = self.__getstate__()
@@ -231,7 +239,7 @@ class TaskManagerUnpickler(pickle.Unpickler):
             # Fetch the referenced record from the database and return it.
             state['queue'] = self.queue
             toret = TaskManager.__new__(TaskManager)
-            toret.__setstate__(state)
+            toret.__dict__ = state
             return toret
         else:
             # Always raises an error if you cannot return the correct object.
@@ -345,8 +353,7 @@ class Task(BaseClass):
                 else:
                     self.state = TaskState.PENDING
         if require_id:
-            hex = hashlib.md5(uid).hexdigest()
-            self.id = str(uuid.UUID(hex=hex))  # unique ID, tied to the given app, args and kwargs
+            self.id = unique_id(uid)  # unique ID, tied to the given app, args and kwargs
         for name in ['jobid', 'errno', 'err', 'out', 'result', 'dtime']:
             if name in kwargs:
                 setattr(self, name, kwargs.pop(name))
@@ -942,7 +949,7 @@ class Queue(BaseClass):
 
         property : str, list, default=None
             If not ``None``, instead of returning task(s), return this property
-            (one of 'tid', 'state', 'jobid', 'task_manager').
+            (one of 'tid', 'state', 'mid', 'jobid', 'task_manager').
 
         Returns
         -------
@@ -984,6 +991,8 @@ class Queue(BaseClass):
             (ptask, tid, state, mid, jobid), task = task, None
             if name or index or not property or any(prop in ['index', 'name'] for prop in property):
                 task = TaskUnpickler.loads(ptask, queue=self)
+                if task.id != tid:
+                    raise RuntimeError('something bad happened, unpickled task id is not the same as the one it was registered with')
                 if name and task.app.name not in name:
                     continue
                 if index and task.index not in index:
@@ -997,6 +1006,9 @@ class Queue(BaseClass):
                     continue
                 if prop == 'state':
                     props.append(state)
+                    continue
+                if prop == 'mid':
+                    props.append(mid)
                     continue
                 if prop == 'jobid':
                     props.append(jobid)
@@ -1086,7 +1098,10 @@ class Queue(BaseClass):
             if property in ('mid', 'tid'):
                 toret.append(mid)
                 continue
-            toret.append(TaskManagerUnpickler.loads(manager, queue=self))
+            manager = TaskManagerUnpickler.loads(manager, queue=self)
+            if manager.id != mid:
+                raise RuntimeError('something bad happened, unpickled manager id is not the same as the one it was registered with')
+            toret.append(manager)
         if one:
             return toret[0]
         return toret
@@ -1558,8 +1573,7 @@ class TaskManager(BaseClass):
         if require_id:
             self.provider.update(environ=self.environ)
             uid = pickle.dumps((self.environ, self.scheduler, self.provider))
-            hex = hashlib.md5(uid).hexdigest()
-            self.id = str(uuid.UUID(hex=hex))  # unique ID, tied to the given environ, scheduler, provider
+            self.id = unique_id(uid)  # unique ID, tied to the given environ, scheduler, provider
         if kwargs:
             raise ValueError('Unrecognized arguments {}'.format(kwargs))
 
@@ -1570,10 +1584,7 @@ class TaskManager(BaseClass):
         return new
 
     def __getstate__(self):
-        return {name: getattr(self, name) for name in ['queue', 'environ', 'scheduler', 'provider']}
-
-    def __setstate__(self, state):
-        self.update(**state)
+        return {name: getattr(self, name) for name in ['queue', 'environ', 'scheduler', 'provider', 'id']}
 
     @decorator
     def python_app(self, func, **kwargs):
