@@ -900,7 +900,8 @@ class Queue(BaseClass):
             self._update_waiting_task_state(tid[0])
 
     def delete(self):
-        """Delete data base :attr:`db` from both this instance and the disk."""
+        """Delete data base :attr:`db` from both this instance and the disk (and delete associated jobs)."""
+        kill(queue=self, all=True)
         if hasattr(self, 'db'):
             self.db.close()
             del self.db
