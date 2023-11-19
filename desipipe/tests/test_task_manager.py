@@ -42,6 +42,7 @@ def test_queue(spawn=True, run=False):
 
     from desipipe import spawn
     queue = Queue('test', base_dir=base_dir)
+    queue.clear()
     provider = dict(provider='local')
     #if os.getenv('NERSC_HOST', None):
     #    provider = dict(time='00:01:00', nodes_per_worker=0.1)
