@@ -173,7 +173,8 @@ def in_options(values, options, return_index=False):
             if tval is not topt and all(topt is type(opt) for opt in options):
                 value = topt(value)
         except Exception as exc:
-            raise ValueError('issue with converting {} of type {} to type {} to match options {}'.format(value, tval, topt, options)) from exc
+            pass
+            #raise ValueError('issue with converting {} of type {} to type {} to match options {}'.format(value, tval, topt, options)) from exc
         if value in options:
             ii = options.index(value)
             toret.append(options[ii])
