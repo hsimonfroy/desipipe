@@ -52,6 +52,15 @@ def test_file_manager():
     file = BaseFile(path='test.fits')
     assert file.filepath
 
+    fm = FileManager()
+    fm.append(dict(description='Y1 data catalogs',
+                   id='catalog_data_y1',
+                   filetype='catalog',
+                   path='tmp.fits',
+                   options={'cut': {None: '', ('rp', 2.5): 'rpcut2.5', ('theta', 0.06): 'thetacut0.06'}}))
+    assert fm.select(cut=[('theta', 0.06)])
+    assert fm.select(cut=('theta', 0.06))
+
 
 if __name__ == '__main__':
 

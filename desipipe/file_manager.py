@@ -149,9 +149,7 @@ def in_options(values, options, return_index=False):
 
     def get_ndim(opt):
         if hasattr(opt, '__iter__') and not isinstance(opt, str):
-            for opt in opt:
-                return 1 + get_ndim(opt)
-            return 1
+            return 1 + max([0] + [get_ndim(opt) for opt in opt])
         return 0
 
     if values is Ellipsis:
@@ -164,14 +162,14 @@ def in_options(values, options, return_index=False):
             return toret, Ellipsis
         return toret
 
-    ndim_options = get_ndim(options)
-    ndim_values = get_ndim(values)
-    if ndim_values == ndim_options - 1:
-        values = [values]
-    elif ndim_values != ndim_options:
-        raise ValueError('Cannot match values {} with options {}'.format(values, options))
-    toret, index = [], []
     options = list(options)
+    if values in options:
+        values = [values]
+    else:
+        ndim_options = get_ndim(options)
+        ndim_values = get_ndim(values)
+        if ndim_values < ndim_options: values = [values]
+    toret, index = [], []
     for value in values:
         try:
             tval, topt = type(value), type(options[0])
