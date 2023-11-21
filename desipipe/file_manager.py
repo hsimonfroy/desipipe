@@ -163,8 +163,9 @@ def in_options(values, options, return_index=False):
         return toret
 
     options = list(options)
-    if values in options:
+    if values in options or get_ndim(values) == 0:
         values = [values]
+
     toret, index = [], []
     for value in values:
         try:
@@ -424,7 +425,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         if 'options' in kwargs:
             options = {}
             for name, values in kwargs['options'].items():
-                if values is None or values is Ellipsis:
+                if values is Ellipsis:
                     values = Ellipsis
                 elif isinstance(values, dict):
                     foptions[name] = list(values.values())
