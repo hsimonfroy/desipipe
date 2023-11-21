@@ -58,6 +58,7 @@ def test_file_manager():
                    filetype='catalog',
                    path='tmp.fits',
                    options={'cut': {None: '', ('rp', 2.5): 'rpcut2.5', ('theta', 0.06): 'thetacut0.06'}}))
+    assert fm.select(cut=[None])
     assert fm.select(cut=[('theta', 0.06)])
     assert fm.select(cut=('theta', 0.06))
 

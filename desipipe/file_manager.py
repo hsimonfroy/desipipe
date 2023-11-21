@@ -165,10 +165,6 @@ def in_options(values, options, return_index=False):
     options = list(options)
     if values in options:
         values = [values]
-    else:
-        ndim_options = get_ndim(options)
-        ndim_values = get_ndim(values)
-        if ndim_values < ndim_options: values = [values]
     toret, index = [], []
     for value in values:
         try:
