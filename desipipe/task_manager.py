@@ -1978,6 +1978,8 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
         parser.add_argument('--jobid', type=str, required=False, default=None, help='Job ID')
         parser.add_argument('--state', nargs='*', type=str, required=False, default=TaskState.ALL, choices=TaskState.ALL, help='Task state')
+        properties = ['jobid', 'errno', 'err', 'out']
+        parser.add_argument('--property', nargs='*', type=str, required=False, default=properties, choices=properties, help='Task properties')
         args = parser.parse_args(args=args)
         queue = get_queue(args.queue, create=False, one=True)
         for state in args.state:
@@ -1986,7 +1988,7 @@ def action_from_args(action='work', args=None):
                 logger.info('Tasks that are {}:'.format(state))
                 for task in tasks:
                     logger.info('app: {}'.format(task.app.name))
-                    for name in ['jobid', 'errno', 'err', 'out']:
+                    for name in args.property:
                         value = getattr(task, name)
                         if value: logger.info('{}: {}'.format(name, value))
                     logger.info('=' * 30)
