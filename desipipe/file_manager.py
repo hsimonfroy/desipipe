@@ -287,10 +287,10 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         dirname = os.path.dirname(filepath)
         utils.mkdir(dirname)
         if save_attrs is not None:
-            with tempfile.TemporaryDirectory() as tmp_dir:
+            with tempfile.TemporaryDirectory(dir=dirname) as tmp_dir:
                 new_dir = save_attrs(tmp_dir) or dirname
                 shutil.copytree(tmp_dir, new_dir, dirs_exist_ok=True)
-        with tempfile.TemporaryDirectory() as tmp_dir:
+        with tempfile.TemporaryDirectory(dir=dirname) as tmp_dir:
             path = os.path.join(tmp_dir, os.path.basename(filepath))
             toret = get_filetype(filetype=self.filetype, path=path).save(*args, **kwargs)
             self.log_info('Moving output to {}'.format(filepath))
