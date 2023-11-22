@@ -272,7 +272,9 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
 
     def load(self, *args, **kwargs):
         """Load file from disk."""
-        return get_filetype(filetype=self.filetype, path=self.__fspath__()).load(*args, **kwargs)
+        filepath = self.__fspath__()
+        self.log_info('Loading {}'.format(filepath))
+        return get_filetype(filetype=self.filetype, path=filepath).load(*args, **kwargs)
 
     def save(self, *args, **kwargs):
         """
