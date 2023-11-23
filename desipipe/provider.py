@@ -24,7 +24,7 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
     """Base computing resource provider class, that runs commands on the specific computer / cluster."""
 
     name = 'base'
-    _defaults = dict()
+    _defaults = {'stop_after': None}
 
     def __init__(self, environ=None, **kwargs):
         """
@@ -133,7 +133,7 @@ class LocalProvider(BaseProvider):
         Template to run a command with MPI.
     """
     name = 'local'
-    _defaults = dict(mpiprocs_per_worker=1, mpiexec='mpiexec -np {mpiprocs:d} {cmd}')
+    _defaults = {**BaseProvider._defaults, 'mpiprocs_per_worker': 1, 'mpiexec': 'mpiexec -np {mpiprocs:d} {cmd}'}
 
     @classmethod
     def jobid(cls):
@@ -211,9 +211,9 @@ class SlurmProvider(BaseProvider):
         Template to run a command with MPI.
     """
     name = 'slurm'
-    _defaults = dict(account='desi', constraint='cpu', qos='regular', time='01:00:00', nodes_per_worker=1., mpiprocs_per_worker=1,
-                     output='/dev/null', error='/dev/null', mpiexec='srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', signal='SIGTERM@30',
-                     killed_at_timeout=None, kwargs=dict())
+    _defaults = {**BaseProvider._defaults, 'account': 'desi', 'constraint': 'cpu', 'qos': 'regular', 'time': '01:00:00', 'nodes_per_worker': 1., 'mpiprocs_per_worker': 1,
+                 'output': '/dev/null', 'error': '/dev/null', 'mpiexec': 'srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', 'signal': 'SIGTERM@30',
+                 'killed_at_timeout': None, 'kwargs': {}}
 
     @classmethod
     def jobid(cls):

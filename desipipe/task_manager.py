@@ -1702,6 +1702,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         queue._add_process(jobid, provider=provider)
 
     global _stream_out_err
+    ntasks = {}
 
     while True:
         stask = task = None
@@ -1710,16 +1711,20 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
             task = queue.pop(mid=mid, tid=tid, name=name, jobid=jobid)
             # Not in pop, because we want the task to be set in running state only when exit_killed can access it
             if task is not None:  # can be None if no task to pop
-                queue.set_task_state(task.id, TaskState.RUNNING)
-                queue.set_task_jobid(task.id, task.jobid)
-                _stream_out_err = task.app.task_manager.provider.name != 'local'
-                killed_at_timeout = getattr(task.app.task_manager.provider, 'killed_at_timeout', None)
+                tm = task.app.task_manager
+                _stream_out_err = tm.provider.name != 'local'
+                killed_at_timeout = getattr(tm.provider, 'killed_at_timeout', None)
+                ntasks[tm.id] = ntasks.get(tm.id, 0) + 1
+                stop_after = getattr(tm.provider, 'stop_after', None)
+                if stop_after is not None and ntasks[tm.id] > stop_after:
+                    task = None
+                else:
+                    queue.set_task_state(task.id, TaskState.RUNNING)
+                    queue.set_task_jobid(task.id, task.jobid)
             stask = TaskPickler.dumps(task, reduce_app=None)
         if mpicomm is not None:
+            killed_at_timeout, _stream_out_err = mpicomm.bcast((killed_at_timeout, _stream_out_err), root=0)
             stask = mpicomm.bcast(stask, root=0)
-            killed_at_timeout = mpicomm.bcast(killed_at_timeout, root=0)
-            _stream_out_err = mpicomm.bcast(_stream_out_err, root=0)
-
         #task_in = TaskUnpickler.loads(stask)
         task = TaskUnpickler.loads(stask)
         if task is None:
@@ -1994,7 +1999,30 @@ def action_from_args(action='work', args=None):
                     logger.info('=' * 30)
         return
 
+    if action == 'time':
+        parser.add_argument('-q', '--queue', type=str, required=True, help='Name of queue; user/queue to select user != {}'.format(Config.default_user))
+        parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
+        parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
+        parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
+        parser.add_argument('--jobid', type=str, required=False, default=None, help='Job ID')
+        args = parser.parse_args(args=args)
+        s, s2, counts = {}, {}, {}
+        queue = get_queue(args.queue, create=False, one=True)
+        tasks = queue.tasks(state=TaskState.SUCCEEDED, tid=args.tid, name=args.name, mid=args.mid, jobid=args.jobid, one=False)
+        for task in tasks:
+            name = task.app.name
+            s[name] = s.get(name, 0) + task.dtime
+            s2[name] = s2.get(name, 0) + task.dtime**2
+            counts[name] = counts.get(name, 0) + 1
+        logger.info('Time:')
+        for name in counts:
+            mean = s[name] / counts[name]
+            cov = (s2[name] - mean * s[name]) / (counts[name] - 1) if counts[name] > 1 else 0.
+            logger.info('{}: {:.1f} +/- {:.1f}'.format(name, mean, cov**0.5))
+        return
+
     if action == 'kill':
+
         parser.add_argument('-q', '--queue', nargs='*', type=str, required=False, default=None, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
         parser.add_argument('--all', action='store_true', help='To kill all processes (manager and worker) associated with the queue')
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
@@ -2081,7 +2109,8 @@ action_from_args.actions = {
     'resume': 'Restart a queue: running manager processes (if any running) distribute again work among workers',
     'delete': 'Delete queue and data base',
     'queues': 'List queues',
-    'tasks': 'List (failed) tasks of given queue',
+    'tasks': 'List tasks of given queue',
+    'time': 'List mean execution time of SUCCEEDED tasks, sorted by name',
     'retry': 'Move (by default killed) tasks into PENDING state, so they are rerun.',
     'kill': 'Kill running tasks of given queue',
 }
