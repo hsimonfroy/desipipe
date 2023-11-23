@@ -899,9 +899,10 @@ class Queue(BaseClass):
         for tid in waiting_tasks:
             self._update_waiting_task_state(tid[0])
 
-    def delete(self):
+    def delete(self, kill=True):
         """Delete data base :attr:`db` from both this instance and the disk (and delete associated jobs)."""
-        kill(queue=self, all=True)
+        if kill:
+            globals()['kill'](queue=self, all=True)
         if hasattr(self, 'db'):
             self.db.close()
             del self.db
@@ -914,9 +915,9 @@ class Queue(BaseClass):
         if mpicomm is not None:
             mpicomm.barrier()
 
-    def clear(self):
+    def clear(self, kill=True):
         """Clear queue: delete and recreate."""
-        self.delete()
+        self.delete(kill=kill)
         self.__init__(self.filename)
 
     def tasks(self, tid=None, state=None, mid=None, jobid=None, name=None, index=None, one=None, property=None):
