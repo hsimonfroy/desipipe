@@ -86,6 +86,11 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
         """Submit input command ``cmd`` on ``workers`` workers."""
         raise NotImplementedError
 
+    @property
+    def timeout(self):
+        """Job times out after this number of seconds."""
+        return 1e20
+
 
 def get_provider(provider=None, **kwargs):
     """
@@ -284,6 +289,11 @@ class SlurmProvider(BaseProvider):
     def cost(self, workers=1):
         """Cost required for input number of workers (in addition to running ones)."""
         return self.nodes(workers=workers) + self.nrunning(of='nodes')
+
+    @property
+    def timeout(self):
+        """Job times out after this number of seconds."""
+        return self.time + 30.  # 30 seconds of margin
 
 
 class NERSCProvider(SlurmProvider):

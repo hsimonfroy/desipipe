@@ -480,7 +480,7 @@ def _make_getter(name):
         except AttributeError:
             while True:
                 if (time.time() - t0) < timeout:
-                    if self.queue.tasks(tid=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING, TaskState.RUNNING):
+                    if self.queue.tasks(tid=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING, TaskState.RUNNING, TaskState.UNKNOWN):
                         # print(self.queue.tasks(self.id)[0].err)
                         tmp = getattr(self.queue.tasks(tid=self.id), name)
                         setattr(self, '_' + name, tmp)
@@ -881,7 +881,6 @@ class Queue(BaseClass):
                 self._release_lock()
                 return
 
-        # Count number of requires that are still pending or waiting
         query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.tid WHERE d.tid=? AND t.state IN (?, ?, ?, ?, ?, ?)'
         row = self._query([query, (tid, TaskState.WAITING, TaskState.PENDING, TaskState.RUNNING, TaskState.FAILED, TaskState.KILLED, TaskState.UNKNOWN)]).fetchone()
         self._release_lock()
@@ -1744,7 +1743,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
             break
 
 
-def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=False):
+def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=False):
     """
     Distribute tasks to workers.
     If all queues are paused, the function terminates.
@@ -1754,7 +1753,7 @@ def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=Fa
     queue : Queue, list
         Queue or list of queues to process.
 
-    timeout : float, default=1e4
+    timeout : float, default=1e6
         Time out after this delay (in seconds).
 
     timestep : float, default=1.
@@ -1774,7 +1773,7 @@ def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=Fa
         return
 
     t0 = time.time()
-    qmanagers = [{} for i in range(len(queues))]
+    qmanagers, running_times = [{} for i in range(len(queues))], [{} for i in range(len(queues))]
     stop = False
     nsteps, stop_after_nsteps = 0, 10
     while True:
@@ -1786,7 +1785,7 @@ def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=Fa
             nsteps = 0
             stop = True
         nsteps += 1
-        for queue, managers in zip(queues, qmanagers):
+        for queue, managers, running_time in zip(queues, qmanagers, running_times):
             queue._add_process(os.getpid(), provider='local')
             if queue.paused:
                 continue
@@ -1800,6 +1799,11 @@ def spawn(queue, timeout=1e4, timestep=1., mode=None, max_workers=None, spawn=Fa
                         manager.scheduler.update(max_workers=max_workers)
                     managers[manager.id] = manager
                 manager = managers[manager.id]  # such that manager.provider keeps track of current processes
+                for tid in queue.tasks(property='tid', state=TaskState.RUNNING):
+                    t0 = time.time()
+                    running_time.setdefault(tid, t0)
+                    if t0 - running_time[tid] > manager.provider.timeout:
+                        queue.set_task_state(tid, TaskState.UNKNOWN)
                 ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING)
                 # print(ntasks, queue.counts(mid=manager.id, state=TaskState.PENDING), queue.counts(mid=manager.id, state=TaskState.WAITING), stop, flush=True)
                 if ntasks:
