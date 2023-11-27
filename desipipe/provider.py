@@ -247,7 +247,7 @@ class SlurmProvider(BaseProvider):
     def update(self, **kwargs):
         """Update provider with input attributes."""
         super(SlurmProvider, self).update(**kwargs)
-        self.time = '{:d}-{:d}:{:d}:{:d}'.format(decode_slurm_time(self.time))  # days-hours:minutes:seconds
+        self.time = '{:d}-{:d}:{:d}:{:d}'.format(*decode_slurm_time(self.time))  # days-hours:minutes:seconds
 
     @classmethod
     def jobid(cls):
