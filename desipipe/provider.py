@@ -185,6 +185,30 @@ class LocalProvider(BaseProvider):
         return 10.
 
 
+def decode_slurm_time(s):
+    """Decode Slurm time."""
+    allowed = '"minutes", "minutes:seconds", "hours:minutes:seconds", "days-hours", "days-hours:minutes" and "days-hours:minutes:seconds"'
+    days_hours_minutes_seconds = [0, 0, 0, 0]
+    ss = s.split(':')
+    if len(ss) > 3:
+        raise ValueError('unknown time format {}, can only decode {}'.format(s, allowed))
+    days_hours = ss[0].split('-')
+    if len(days_hours) > 2:
+        raise ValueError('unknown time format {}, can only decode {}'.format(s, allowed))
+    if len(days_hours) == 2:  # minutes
+        days_hours_minutes_seconds[:2] = days_hours
+        ss = ss[1:]  # days-hours
+    if len(ss) <= 2:  # minutes, minutes:seconds
+        days_hours_minutes_seconds[2:len(ss) + 2] = ss
+    else:  # hours:minutes:seconds
+        days_hours_minutes_seconds[1:len(ss) + 1] = ss
+    try:
+        days_hours_minutes_seconds = [int(s) for s in days_hours_minutes_seconds]
+    except ValueError as exc:
+        raise ValueError('unknown time format {}, can only decode {}'.format(s, allowed)) from exc
+    return tuple(days_hours_minutes_seconds)
+
+
 class SlurmProvider(BaseProvider):
     """
     Slurm provider: input commands are submitted as Slurm jobs.
@@ -219,6 +243,11 @@ class SlurmProvider(BaseProvider):
     _defaults = {**BaseProvider._defaults, 'account': 'desi', 'constraint': 'cpu', 'qos': 'regular', 'time': '01:00:00', 'nodes_per_worker': 1., 'mpiprocs_per_worker': 1,
                  'output': '/dev/null', 'error': '/dev/null', 'mpiexec': 'srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', 'signal': 'SIGTERM@30',
                  'killed_at_timeout': None, 'kwargs': {}}
+
+    def update(self, **kwargs):
+        """Update provider with input attributes."""
+        super(SlurmProvider, self).update(**kwargs)
+        self.time = '{:d}-{:d}:{:d}:{:d}'.format(decode_slurm_time(self.time))  # days-hours:minutes:seconds
 
     @classmethod
     def jobid(cls):
@@ -293,7 +322,9 @@ class SlurmProvider(BaseProvider):
     @property
     def timeout(self):
         """Job times out after this number of seconds."""
-        return self.time + 30.  # 30 seconds of margin
+        days_hours_minutes_seconds = decode_slurm_time(self.time)
+        factors = [24. * 3600., 3600., 60., 1.]
+        return sum(tmp * factor for tmp, factor in zip(days_hours_minutes_seconds, factors)) + 30.  # 30 seconds of margin
 
 
 class NERSCProvider(SlurmProvider):

@@ -199,6 +199,16 @@ def test_mpi():
     tm = TaskManager(queue, environ=dict(), scheduler=dict(max_workers=2), provider=provider)
 
 
+def test_slurm():
+    from desipipe.provider import decode_slurm_time
+    assert decode_slurm_time('51') == (0, 0, 51, 0)
+    assert decode_slurm_time('51:20') == (0, 0, 51, 20)
+    assert decode_slurm_time('02:51:20') == (0, 2, 51, 20)
+    assert decode_slurm_time('3-02') == (3, 2, 0, 0)
+    assert decode_slurm_time('3-02:30') == (3, 2, 30, 0)
+    assert decode_slurm_time('3-02:30:08') == (3, 2, 30, 8)
+
+
 if __name__ == '__main__':
 
     #test_serialization()
@@ -207,3 +217,4 @@ if __name__ == '__main__':
     test_cmdline()
     #test_file(spawn=True)
     #test_mpi()
+    test_slurm()
