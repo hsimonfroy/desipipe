@@ -107,32 +107,15 @@ One can interact with ``queue`` from python directly, e.g.: :meth:`Queue.tasks` 
 Usually though, one will use the command line: see the cheat list below.
 
 
-Debugging
----------
-
-If some tasks of a queue 'my_queue' failed, you can check their input parameters,
-and try to rerun them (with other parameters), with:
-
-.. code-block:: python
-
-  queue = Queue('my_queue')
-  for task in queue.tasks(state='FAILED'):
-      print(task.kwargs)
-      print(task.app.code)  # code that is run
-      task.run()  # you can pass any argument to override those in kwargs
-
-
 Cheat list
 ----------
 
-Spawn a manager process
-~~~~~~~~~~~~~~~~~~~~~~~
+To know more about the options for the commands below, use ``--help``!, e.g.:
 
 .. code-block:: bash
 
-  desipipe spawn -q my_queue
+  desipipe tasks --help
 
-The process will distribute the tasks among workers, using the scheduler and provider defined above.
 
 Print queues
 ~~~~~~~~~~~~
@@ -141,19 +124,23 @@ Print queues
 
   desipipe queues -q '*/*'
 
-Print tasks in queue
-~~~~~~~~~~~~~~~~~~~~
+Print the list of all your queues.
+
+Spawn a manager process
+~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
-  desipipe tasks -q my_queue
+  desipipe spawn -q my_queue --spawn
 
-Task state can be:
-- 'WAITING': Waiting for requirements (other tasks) to finish
-- 'PENDING': Eligible to be selected and run
-- 'RUNNING': Running right now (out and err are updated live)
-- 'SUCCEEDED': Finished with errno = 0
-- 'FAILED': Finished with errno != 0
+is the equivalent of the Python code:
+
+.. code-block:: python
+
+  spawn(queue, spawn=True)
+
+This command is the one to "get the work job done".
+Specifically, it spawns a manager process that distributes the tasks among workers.
 
 Pause a queue
 ~~~~~~~~~~~~~
@@ -171,16 +158,34 @@ Resume a queue
 
   desipipe resume -q my_queue   # pass --spawn to spawn a manager process that will distribute the tasks among workers
 
-When resuming a queue, tasks can be processed.
+This is the opposite of ``pause``. When resuming a queue, tasks will get processed again.
+
+Print tasks in queue
+~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+  desipipe tasks -q my_queue
+
+Task state can be:
+
+  - 'WAITING': Waiting for requirements (other tasks) to finish.
+  - 'PENDING': Eligible to be selected and run.
+  - 'RUNNING': Running right now (out and err are updated live).
+  - 'SUCCEEDED': Finished with errno = 0. All good!
+  - 'FAILED': Finished with errno != 0. This means the code raised an exception.
+  - 'KILLED': Killed. Typically when the task has not had time to finish, because the requested amount of time was not sufficient. May be raised by out-of-memory as well.
+  - 'UNKNOWN': The task has been in 'RUNNING' state longer than the requested amount of time in the provider. This means that **desipipe** could not properly update the task state before the job was killed, typically because the job ran out-of-time. If you scheduled the requested time to be able to fit in multiple tasks, you may just want to retry running these tasks (see below).
+
 
 Retry tasks
 ~~~~~~~~~~~
 
 .. code-block:: bash
 
-  desipipe retry -q my_queue
+  desipipe retry -q my_queue --state KILLED
 
-Task state is changed to 'PENDING', i.e. they will be processed again.
+Tasks for which state is 'UNKNOWN' are changed to 'PENDING', i.e. they will be processed again.
 
 Kill tasks
 ~~~~~~~~~~
@@ -189,7 +194,7 @@ Kill tasks
 
   desipipe kill -q my_queue
 
-Kills running tasks.
+Kills running tasks of the queue.
 
 .. code-block:: bash
 
@@ -203,3 +208,75 @@ Delete queue(s)
 .. code-block:: bash
 
   desipipe delete -q 'my_*'  # pass --force to actually delete the queue
+
+
+Example & troubleshooting
+-------------------------
+
+Let's consider this queue.
+
+.. code-block:: bash
+
+  $ desipipe queues -q my_queue
+  [000000.02]  11-28 21:14  desipipe                  INFO     Matching queues:
+  [000000.07]  11-28 21:14  desipipe                  INFO     Queue(size=116, state=ACTIVE, filename=.../my_queue.sqlite)
+  WAITING   : 0
+  PENDING   : 1
+  RUNNING   : 0
+  SUCCEEDED : 107
+  FAILED    : 0
+  KILLED    : 7
+  UNKNOWN   : 1
+
+Out of the 116 tasks, 107 have been processed and 'SUCCEEDED' already, good!
+
+7 tasks are 'KILLED'. It is probably because they have not finished in the required time.
+You can check their output (if any) and errors with:
+
+.. code-block:: bash
+
+  $ desipipe tasks -q my_queue --state KILLED
+
+If that is not enough to understand why they have been killed and you need to review e.g. the input parameters or the code processed by these tasks, go for Python:
+
+.. code-block:: python
+
+  queue = Queue('my_queue')
+  for task in queue.tasks(state='KILLED'):
+      print(task.kwargs)
+      print(task.app.code)  # code that is run
+      task.run()  # run the task; you can pass any argument to override those in kwargs
+
+You might also want to do that if you had 'FAILED' tasks.
+
+There is 1 'UNKNOWN' task. This means that **desipipe** could not properly update the task state before the job was killed, typically because the job ran out-of-time.
+If you scheduled the requested time to be able to fit in multiple tasks, you may just want to retry running this task:
+
+.. code-block:: bash
+
+  desipipe retry -q my_queue --state KILLED
+
+But, in this very case, the issue may be the same as for the 7 'KILLED' tasks.
+
+There is 1 'PENDING' task, i.e. to be processed. If it never goes to running, it may mean that for some reason the manager process has been killed.
+On Unix systems, you can typically check that with:
+
+.. code-block:: bash
+
+  top -p $(pgrep -d',' -f "desipipe")
+
+If nothing is returned, that means the manager process does not exist anymore. You can just spawn a new one:
+
+.. code-block:: bash
+
+  desipipe spawn -q my_queue --spawn
+
+In case of **emergency** (nothing working anymore), you can manually delete the queue sqlite file ``.../my_queue.sqlite``, that you can get with:
+
+.. code-block:: bash
+
+  $ desipipe queues -q my_queue
+  [000000.02]  11-28 21:14  desipipe                  INFO     Matching queues:
+  [000000.07]  11-28 21:14  desipipe                  INFO     Queue(size=116, state=ACTIVE, filename=.../my_queue.sqlite)
+
+That will eventually kill all jobs associated with this queue.

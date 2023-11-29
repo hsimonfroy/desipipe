@@ -1867,7 +1867,7 @@ def kill(queue=None, all=False, provider=None, jobid=None, state=None, **kwargs)
                     get_provider(provider).kill(pid)
 
 
-def retry(queue, **kwargs):
+def retry(queue, state=TaskState.KILLED, **kwargs):
     """
     Move (by default killed) tasks into PENDING state, so they are rerun.
 
@@ -1885,7 +1885,7 @@ def retry(queue, **kwargs):
     """
     queues = get_queue(queue, create=False, one=False)
     for queue in queues:
-        for tid in queue.tasks(property='tid', one=False, **kwargs):
+        for tid in queue.tasks(property='tid', one=False, state=state, **kwargs):
             queue.set_task_state(tid, state=TaskState.PENDING)
 
 
