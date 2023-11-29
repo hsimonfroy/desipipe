@@ -158,6 +158,7 @@ class BaseMatrixFile(BaseFile):
 class ChainFile(BaseFile):
 
     """Chain file."""
+    name = 'chain'
 
     def load(self):
         """Load chain."""
@@ -172,6 +173,7 @@ class ChainFile(BaseFile):
 class ProfilesFile(BaseFile):
 
     """Profiles file."""
+    name = 'profiles'
 
     def load(self):
         """Load profiles."""
