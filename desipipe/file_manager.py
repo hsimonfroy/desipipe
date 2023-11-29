@@ -240,8 +240,11 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
 
     description : str, default=''
         Plain text describing the file(s).
+
+    link : str, default=''
+        Symlink.
     """
-    _defaults = dict(path='', filetype='generic', id='', author='', options=dict(), foptions=dict(), description='')
+    _defaults = dict(path='', filetype='generic', id='', author='', options=dict(), foptions=dict(), description='', link='')
 
     def update(self, **kwargs):
         """Update input attributes."""
@@ -253,9 +256,9 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         for name, values in self.options.items():
             self.foptions.setdefault(name, values)
 
-    def __fspath__(self):
+    def _resolve_path(self, path):
         """Real path i.e. replacing placeholders in :attr:`path` by their value."""
-        path = path_replace_environ(self.path, environ=getattr(self, 'environ', {}))
+        path = path_replace_environ(path, environ=getattr(self, 'environ', {}))
 
         # return path.format(**self.foptions)
         def fstr(template, kwargs):
@@ -269,6 +272,10 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
             if len(exist) > 1:
                 raise ValueError('found multiple paths for {}: {}'.format(path, exist))
         return path
+
+    def __fspath__(self):
+        """Real path i.e. replacing placeholders in :attr:`path` by their value."""
+        return self._resolve_path(self.path)
 
     def load(self, *args, **kwargs):
         """Load file from disk."""
@@ -301,6 +308,15 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         """``True`` if file exists, else ``False``."""
         return os.path.isfile(self.__fspath__())
 
+    def symlink(self, raise_error=True):
+        """Create symlink."""
+        try:
+            if not self.link:
+                raise ValueError('no link given, try update(link=...)')
+            return os.symlink(self.__fspath__(), self._resolve_path(self.link))
+        except Exception as exc:
+            if raise_error: raise exc
+
     @property
     def filepath(self):
         return self.__fspath__()
@@ -314,8 +330,9 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     def __repr__(self):
         """String representation: class name and attributes."""
         di = self.to_dict()
-        di.pop('path')
+        di.pop('path'); di.pop('link')
         di['filepath'] = self.__fspath__()
+        if self.link: di['symlink'] = self._resolve_path(self.link)
         di.pop('foptions')
         #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
@@ -416,9 +433,12 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
 
     description : str, default=''
         Plain text describing the file(s).
+
+    link : str, default=''
+        Symlink.
     """
     name = 'base'
-    _defaults = dict(path='', filetype='generic', id='', author='', options=dict(), foptions=dict(), description='')
+    _defaults = dict(path='', filetype='generic', id='', author='', options=dict(), foptions=dict(), description='', link='')
     _file_cls = BaseFile
 
     def update(self, **kwargs):
@@ -615,6 +635,12 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         """All file paths in file entry."""
         return [ff.filepath for ff in self]
 
+    def symlink(self, raise_error=True):
+        """Create symlink for all file entries."""
+        if not self.link:
+            raise ValueError('no link given, try update(link=...)')
+        for ff in self: ff.symlink(raise_error=raise_error)
+
     def exists(self, return_type='dict'):
         """
         Return summary description of which files exist or not.
@@ -641,7 +667,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                 toret.append('=' * len(toret[-1]))
                 toret += filepaths
             return '\n'.join(toret)
-        raise ValueError('Unknown return_type {}'.format(return_type))
+        raise ValueError('unknown return_type {}'.format(return_type))
 
 
 def get_file_entry(file_entry=None, file_entry_collection=None, **kwargs):

@@ -11,6 +11,7 @@ description: Power spectra of lognormal catalogs.
 id: lognormal_catalog_power
 filetype: power
 path: ${DESIPIPEENVDIR}/_pk/power_{option}_{"LRG_test" if tracer == "LRG" else tracer}_{zrange[0]:.2f}_{zrange[1]:.2f}_{imock:d}.fits
+link: ${DESIPIPEENVDIR}/_pk/power_{imock:d}.fits
 options:
   option:
   tracer: {'LRG': 'LRG', 'ELG': 'ELG_LOP'}
