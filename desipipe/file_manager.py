@@ -312,7 +312,7 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         """Create symlink."""
         try:
             if not self.link:
-                raise ValueError('no link given, try update(link=...)')
+                raise ValueError('no link given for {}, try update(link=...)'.format(self))
             return os.symlink(self.__fspath__(), self._resolve_path(self.link))
         except Exception as exc:
             if raise_error: raise exc
@@ -637,8 +637,6 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
 
     def symlink(self, raise_error=True):
         """Create symlink for all file entries."""
-        if not self.link:
-            raise ValueError('no link given, try update(link=...)')
         for ff in self: ff.symlink(raise_error=raise_error)
 
     def exists(self, return_type='dict'):
@@ -1008,7 +1006,7 @@ class FileEntryCollection(BaseClass):
 
     @property
     def filepaths(self):
-        """All file paths in file data base."""
+        """All file paths in file collection."""
         toret = []
         for entry in self.data:
             toret += entry.filepaths
@@ -1016,6 +1014,11 @@ class FileEntryCollection(BaseClass):
 
     def __repr__(self):
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join([repr(entry) for entry in self.data]))
+
+    def symlink(self, raise_error=True):
+        """Create symlink for all files in the collection."""
+        for entry in self.data:
+            entry.symlink(raise_error=raise_error)
 
     def exists(self, return_type='dict'):
         """
