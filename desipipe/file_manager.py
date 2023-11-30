@@ -313,7 +313,9 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         try:
             if not self.link:
                 raise ValueError('no link given for {}, try update(link=...)'.format(self))
-            return os.symlink(self.__fspath__(), self._resolve_path(self.link))
+            symlink = self._resolve_path(self.link)
+            utils.mkdir(os.path.dirname(symlink))
+            return os.symlink(self.__fspath__(), symlink)
         except Exception as exc:
             if raise_error: raise exc
 
@@ -1173,14 +1175,25 @@ class FileManager(FileEntryCollection):
         if not self.data:
             return []
         fms = []
-        for options in self.iter_options(include=include, exclude=exclude, intersection=intersection):
+        if intersection:
+            for options in self.iter_options(include=include, exclude=exclude, intersection=True):
+                fm = self.clone(data=[])
+                for entry in self.data:
+                    entry = entry.select(ignore=False, **{**entry.options, **options})
+                    if entry:
+                        fm.append(entry)
+                if fm:
+                    fms.append(fm)
+        else:
             fm = self.clone(data=[])
             for entry in self.data:
-                entry = entry.select(ignore=not intersection, **{**entry.options, **options})
-                if entry:
-                    fm.append(entry)
+                for options in iter_options(entry.options, include=include, exclude=exclude):
+                    sentry = entry.select(ignore=True, **options)
+                    if sentry:
+                        fm.append(sentry)
             if fm:
                 fms.append(fm)
+
         if get is False:
             return fms
         if get is None and exclude is None:
