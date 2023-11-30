@@ -107,6 +107,35 @@ One can interact with ``queue`` from python directly, e.g.: :meth:`Queue.tasks` 
 Usually though, one will use the command line: see the cheat list below.
 
 
+NERSC
+-----
+There is already a provider and environment implemented for NERSC. See the example below.
+
+.. code-block:: python
+
+  from desipipe import Queue, Environment, TaskManager, FileManager
+
+  # Let's instantiate a Queue, which records all tasks to be performed
+  queue = Queue('my_queue')
+  environ = Environment('nersc-cosmodesi')  # nersc-cosmodesi environment, set up for DESI
+  tm = TaskManager(queue=queue, environ=environ)
+  # Pool of 30 workers (max_workers=30), each running on 1 CPU node (nodes_per_worker=1), each with 64 MPI processes (mpiprocs_per_worker=64) for 30 minutes (time='00:30:00')
+  # Slurm output / error files written in _sbatch directory
+  tm_power = tm.clone(scheduler=dict(max_workers=30), provider=dict(provider='nersc', time='00:30:00', mpiprocs_per_worker=64, nodes_per_worker=1, output='_sbatch/slurm-%j.out', error='_sbatch/slurm-%j.err'))
+  # Pool of 4 workers (max_workers=4), each running on 1 GPU node (nodes_per_worker=1), each with 1 MPI process (mpiprocs_per_worker=1) for 10 minutes (time='00:10:00')
+  tm_corr = tm.clone(scheduler=dict(max_workers=4), provider=dict(provider='nersc', time='00:10:00', mpiprocs_per_worker=1, output='_sbatch/slurm-%j.out', error='_sbatch/slurm-%j.err', constraint='gpu'))
+  # Pool of 10 workers (max_workers=10), each running on 1 / 5 of a CPU node (nodes_per_worker=0.2), each with 8 MPI processes (mpiprocs_per_worker=8) for one hour (time='01:00:00')
+  tm_fit = tm.clone(scheduler=dict(max_workers=10), provider=dict(provider='nersc', time='01:00:00', mpiprocs_per_worker=8, nodes_per_worker=0.2, output='_sbatch/slurm-%j.out', error='_sbatch/slurm-%j.err'))
+
+  @tm_power.python_app
+  def compute_power_spectrum(...):
+    ...
+
+  @tm_fit.python_app
+  def profile(...):
+    ...
+
+
 Cheat list
 ----------
 
@@ -174,8 +203,8 @@ Task state can be:
   - 'RUNNING': Running right now (out and err are updated live).
   - 'SUCCEEDED': Finished with errno = 0. All good!
   - 'FAILED': Finished with errno != 0. This means the code raised an exception.
-  - 'KILLED': Killed. Typically when the task has not had time to finish, because the requested amount of time was not sufficient. May be raised by out-of-memory as well.
-  - 'UNKNOWN': The task has been in 'RUNNING' state longer than the requested amount of time in the provider. This means that **desipipe** could not properly update the task state before the job was killed, typically because the job ran out-of-time. If you scheduled the requested time to be able to fit in multiple tasks, you may just want to retry running these tasks (see below).
+  - 'KILLED': Killed. Typically when the task has not had time to finish, because the requested amount of time (if any) was not sufficient. May be raised by out-of-memory as well.
+  - 'UNKNOWN': The task has been in 'RUNNING' state longer than the requested amount of time (if any) in the provider. This means that **desipipe** could not properly update the task state before the job was killed, typically because the job ran out-of-time. If you scheduled the requested time to be able to fit in multiple tasks, you may just want to retry running these tasks (see below).
 
 
 Retry tasks
@@ -185,7 +214,7 @@ Retry tasks
 
   desipipe retry -q my_queue --state KILLED
 
-Tasks for which state is 'UNKNOWN' are changed to 'PENDING', i.e. they will be processed again.
+Tasks for which state is 'KILLED' (and only those tasks) are changed to 'PENDING', i.e. they will be processed again.
 
 Kill tasks
 ~~~~~~~~~~
@@ -250,13 +279,15 @@ If that is not enough to understand why they have been killed and you need to re
 You might also want to do that if you had 'FAILED' tasks.
 
 There is 1 'UNKNOWN' task. This means that **desipipe** could not properly update the task state before the job was killed, typically because the job ran out-of-time.
-If you scheduled the requested time to be able to fit in multiple tasks, you may just want to retry running this task:
+Note that, in this very case, the issue encountered by the task with 'UNKNOWN' state may be the same as for the 7 'KILLED' tasks.
+Anyway, you might just want to retry running this task:
 
 .. code-block:: bash
 
-  desipipe retry -q my_queue --state KILLED
+  desipipe retry -q my_queue --state UNKNOWN
 
-But, in this very case, the issue may be the same as for the 7 'KILLED' tasks.
+In practice, the command switches the task(s) with state 'UNKNOWN' (and only those tasks) to 'PENDING', so they can be processed again.
+However, if the manager process is not running anymore, you may need to restart it --- read just below.
 
 There is 1 'PENDING' task, i.e. to be processed. If it never goes to running, it may mean that for some reason the manager process has been killed.
 On Unix systems, you can typically check that with:
