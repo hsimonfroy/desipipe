@@ -1190,9 +1190,8 @@ class FileManager(FileEntryCollection):
                 for options in iter_options(entry.options, include=include, exclude=exclude):
                     sentry = entry.select(ignore=True, **options)
                     if sentry:
-                        fm.append(sentry)
-            if fm:
-                fms.append(fm)
+                        fm = self.clone(data=[sentry])
+                        fms.append(fm)
 
         if get is False:
             return fms
