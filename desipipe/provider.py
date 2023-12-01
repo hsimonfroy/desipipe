@@ -9,11 +9,15 @@ from .utils import BaseClass
 
 
 def get_ttl_hash(dt=1):
-    """Return the same value withing ``dt`` time period."""
+    """Return the same value withing ``dt`` second time period."""
     return round(time.time() / dt)
 
 
 def time_lru_cache(dt=1):
+    """
+    Wrapper that caches function result for a ``dt`` second time period maximum.
+    Idea taken from https://stackoverflow.com/questions/31771286/python-in-memory-cache-with-time-to-live
+    """
 
     def make_wrapper(func):
 
