@@ -106,9 +106,11 @@ class SimpleScheduler(BaseScheduler):
         max_workers = min(ntasks, self.max_workers)
         best_workers, best_cost = 0, float('inf')
         for workers in range(1, max_workers + 1):
+            # print(workers, self.provider.nrunning(), max_workers)
             if (workers + self.provider.nrunning()) > max_workers: break
             cost = self.provider.cost(workers=workers)
             if cost <= best_cost:
                 best_workers, best_cost = workers, cost
+        # print('BEST', best_workers)
         if best_workers:
             self.provider(cmd, workers=best_workers)

@@ -3,8 +3,31 @@ import time
 import copy
 import random
 import subprocess
+import functools
 
 from .utils import BaseClass
+
+
+def get_ttl_hash(dt=1):
+    """Return the same value withing ``dt`` time period."""
+    return round(time.time() / dt)
+
+
+def time_lru_cache(dt=1):
+
+    def make_wrapper(func):
+
+        @functools.lru_cache()
+        def my_func(*args, ttl_hash=None, **kwargs):
+            return func(*args, **kwargs)
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return my_func(*args, ttl_hash=get_ttl_hash(dt=dt), **kwargs)
+
+        return wrapper
+
+    return make_wrapper
 
 
 class RegisteredProvider(type(BaseClass)):
@@ -166,6 +189,7 @@ class LocalProvider(BaseProvider):
             self.processes.append(subprocess.Popen(tmp.split(' '), start_new_session=True, env=environ))
             time.sleep(random.uniform(0.8, 1.2))
 
+    @time_lru_cache()
     def nrunning(self):
         """Number of running workers."""
         return sum(process.poll() is None for process in self.processes)
@@ -284,6 +308,7 @@ class SlurmProvider(BaseProvider):
         """Current job IDs."""
         return [process[0] for process in self.processes]
 
+    @time_lru_cache()
     def nrunning(self, of='workers'):
         """Number of running workers."""
         allowed_of = ['workers', 'nodes']
