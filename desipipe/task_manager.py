@@ -721,13 +721,17 @@ class Queue(BaseClass):
         self._query([query, (manager.id, TaskManagerPickler.dumps(manager))])
         self.db.commit()
 
-    def _add_process(self, pid, provider):
+    def add_process(self, pid, provider):
         # """Add input process id to the data base (or replace if already there)."""
         query = 'INSERT OR REPLACE INTO processes (pid, provider) VALUES (?, ?)'
         pid = str(pid)
         provider = str(getattr(provider, 'name', provider))
-        self._query([query, (pid, provider)])
-        self.db.commit()
+        try:
+            self._get_lock()
+            self._query([query, (pid, provider)])
+            self.db.commit()
+        finally:
+            self._release_lock()
 
     def add(self, tasks, replace=False):
         """
@@ -816,8 +820,10 @@ class Queue(BaseClass):
         """Set queue state ('ACTIVE' or 'PAUSED')."""
         if state not in (QueueState.ACTIVE, QueueState.PAUSED):
             raise ValueError('Invalid queue state {}; should be {} or {}'.format(state, QueueState.ACTIVE, QueueState.PAUSED))
+        self._get_lock()
         self._query(['UPDATE metadata SET value=? where key="state"', (state,)])
         self.db.commit()
+        self._release_lock()
 
     def pause(self):
         """Pause queue, i.e. set state to 'PAUSED'."""
@@ -1699,7 +1705,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     if provider is not None:
         provider = get_provider(provider)
         jobid = provider.jobid()
-        queue._add_process(jobid, provider=provider)
+        queue.add_process(jobid, provider=provider)
 
     global _stream_out_err
     ntasks = {}
@@ -1786,7 +1792,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
             stop = True
         nsteps += 1
         for queue, managers, running_time in zip(queues, qmanagers, running_times):
-            queue._add_process(os.getpid(), provider='local')
+            queue.add_process(os.getpid(), provider='local')
             if queue.paused:
                 continue
             if mode == 'stop_at_error' and queue.counts(state=TaskState.FAILED):
@@ -1810,7 +1816,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
                     # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
                     manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=ntasks)
                     for jobid in manager.provider.jobids():
-                        queue._add_process(jobid, provider=manager.provider)
+                        queue.add_process(jobid, provider=manager.provider)
         time.sleep(timestep * random.uniform(0.8, 1.2))
     # print('TERMINATED')
 
