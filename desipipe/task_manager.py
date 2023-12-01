@@ -1791,7 +1791,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
             nsteps = 0
             stop = True
         nsteps += 1
-        for queue, managers, running_time in zip(queues, qmanagers, running_times):
+        for iq, (queue, managers) in enumerate(zip(queues, qmanagers)):
             queue.add_process(os.getpid(), provider='local')
             if queue.paused:
                 continue
@@ -1799,16 +1799,18 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
                 continue
             if queue.counts(state=(TaskState.PENDING, TaskState.RUNNING)):
                 stop = False
+            running_time = running_times[iq]
+            new_running_time = {}
             for manager in queue.managers():
                 if manager.id not in managers:
                     if max_workers is not None:
                         manager.scheduler.update(max_workers=max_workers)
                     managers[manager.id] = manager
                 manager = managers[manager.id]  # such that manager.provider keeps track of current processes
-                for tid in queue.tasks(property='tid', state=TaskState.RUNNING):
+                for tid in queue.tasks(property='tid', mid=manager.id, state=TaskState.RUNNING):
                     t0 = time.time()
-                    running_time.setdefault(tid, t0)
-                    if t0 - running_time[tid] > manager.provider.timeout:
+                    new_running_time[tid] = running_time.get(tid, t0)
+                    if t0 - new_running_time[tid] > manager.provider.timeout:
                         queue.set_task_state(tid, TaskState.UNKNOWN)
                 ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING)
                 # print(ntasks, queue.counts(mid=manager.id, state=TaskState.PENDING), queue.counts(mid=manager.id, state=TaskState.WAITING), stop, flush=True)
@@ -1817,6 +1819,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
                     manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=ntasks)
                     for jobid in manager.provider.jobids():
                         queue.add_process(jobid, provider=manager.provider)
+            running_times[iq] = new_running_time  # to free some space
         time.sleep(timestep * random.uniform(0.8, 1.2))
     # print('TERMINATED')
 
@@ -1864,13 +1867,19 @@ def kill(queue=None, all=False, provider=None, jobid=None, state=None, **kwargs)
     else:
         queues = get_queue(queue, create=False, one=False)
         for queue in queues:
+            jobids = {}
             for task in queue.tasks(jobid=jobid, one=False, state=state, **kwargs):
                 if not bool(task.jobid): continue
                 if provider is not None and provider.__class__ is not task.app.task_manager.provider.__class__: continue
-                task.app.task_manager.provider.kill(task.jobid)
+                provider = task.app.task_manager.provider.name
+                jobids.setdefault(provider, [])
+                jobids[provider].append(task.jobid)
             if all:
-                for pid, provider in queue.processes():
-                    get_provider(provider).kill(pid)
+                for jid, provider in queue.processes():
+                    jobids.setdefault(provider, [])
+                    jobids[provider].append(jid)
+            for provider, jid in jobids.items():
+                get_provider(provider).kill(*jid)
 
 
 def retry(queue, state=TaskState.KILLED, **kwargs):
