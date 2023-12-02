@@ -1779,7 +1779,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
         return
 
     t0 = time.time()
-    qmanagers, running_times = [{} for i in range(len(queues))], [{} for i in range(len(queues))]
+    qmanagers, running_times, launched_tids = [{} for i in range(len(queues))], [{} for i in range(len(queues))], [[] for i in range(len(queues))]
     stop = False
     nsteps, stop_after_nsteps = 0, 10
     while True:
@@ -1807,16 +1807,22 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
                         manager.scheduler.update(max_workers=max_workers)
                     managers[manager.id] = manager
                 manager = managers[manager.id]  # such that manager.provider keeps track of current processes
+                if not queue.counts(state=(TaskState.PENDING, TaskState.RUNNING), mid=manager.id):
+                    manager.provider.kill(*manager.provider.jobids())  # no PENDING / RUNNING task remaining, we can kill all launched jobs
+                    manager.provider.clear()
+                    launched_tids[iq] = []
                 for tid in queue.tasks(property='tid', mid=manager.id, state=TaskState.RUNNING):
                     t0 = time.time()
                     new_running_time[tid] = running_time.get(tid, t0)
                     if t0 - new_running_time[tid] > manager.provider.timeout:
                         queue.set_task_state(tid, TaskState.UNKNOWN)
-                ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING)
+                tids = queue.tasks(mid=manager.id, state=TaskState.PENDING, property='tid')
+                tids = [tid for tid in tids if tid not in launched_tids[iq]]
                 # print(ntasks, queue.counts(mid=manager.id, state=TaskState.PENDING), queue.counts(mid=manager.id, state=TaskState.WAITING), stop, flush=True)
-                if ntasks:
+                if tids:
                     # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
-                    manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=ntasks)
+                    manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=len(tids))
+                    launched_tids[iq] += tids
                     for jobid in manager.provider.jobids():
                         queue.add_process(jobid, provider=manager.provider)
             running_times[iq] = new_running_time  # to free some space

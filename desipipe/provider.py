@@ -93,6 +93,10 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
             else:
                 raise ValueError('Unknown argument {}; supports {}'.format(name, list(self._defaults)))
 
+    def clear(self):
+        """Clear, i.e. delete information (typically job IDs) from current run."""
+        pass
+
     def jobids(self):
         """Current job IDs."""
         return []
@@ -167,6 +171,7 @@ class LocalProvider(BaseProvider):
     name = 'local'
     _defaults = {**BaseProvider._defaults, 'mpiprocs_per_worker': 1, 'mpiexec': 'mpiexec -np {mpiprocs:d} {cmd}'}
 
+
     @classmethod
     def jobid(cls):
         """Return job ID."""
@@ -192,6 +197,10 @@ class LocalProvider(BaseProvider):
             # self.processes.append(subprocess.Popen(tmp.split(' ')))
             self.processes.append(subprocess.Popen(tmp.split(' '), start_new_session=True, env=environ))
             time.sleep(random.uniform(0.8, 1.2))
+
+    def clear(self):
+        """Clear, i.e. delete information (processes) from current run."""
+        self.processes = []
 
     @time_lru_cache()
     def nrunning(self):
@@ -285,7 +294,8 @@ class SlurmProvider(BaseProvider):
     @classmethod
     def kill(cls, *jobids):
         """Kill input job IDs."""
-        subprocess.run(['scancel'] + [str(jobid) for jobid in jobids])
+        if jobids:
+            subprocess.run(['scancel'] + [str(jobid) for jobid in jobids])
 
     def __call__(self, cmd, workers=1):
         """Submit input command ``cmd`` on ``workers`` workers."""
@@ -306,6 +316,10 @@ class SlurmProvider(BaseProvider):
         cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--signal', str(self.signal), '--parsable'] + kwargs + ['--wrap', cmd]
         proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
         self.processes.append((proc.stdout.split(',')[0].strip(), nodes, workers))  # jobid, workers
+
+    def clear(self):
+        """Clear, i.e. delete information (processes) from current run."""
+        self.processes = []
 
     def jobids(self):
         """Current job IDs."""
