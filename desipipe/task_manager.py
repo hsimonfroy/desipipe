@@ -1783,6 +1783,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
 
     t0 = time.time()
     qmanagers = [{} for i in range(len(queues))]
+    added_processes = set()
     stop = False
     nsteps, stop_after_nsteps = 0, 10
     while True:
@@ -1817,7 +1818,8 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
                     # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
                     manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=ntasks)
                     for jobid in manager.provider.jobids():
-                        if jobid is not None:
+                        if jobid is not None and (manager.provider.name, jobid) not in added_processes:  # just to limit queries
+                            added_processes.add((manager.provider.name, jobid))
                             queue.add_process(jobid, provider=manager.provider)
         time.sleep(timestep * random.uniform(0.8, 1.2))
 
