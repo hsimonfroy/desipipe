@@ -197,7 +197,7 @@ class LocalProvider(BaseProvider):
                 tmp = self.mpiexec.format(mpiprocs=self.mpiprocs_per_worker, cmd=tmp)
             # self.processes.append(subprocess.Popen(tmp.split(' ')))
             self.processes.append(subprocess.Popen(tmp.split(' '), start_new_session=True, env=environ))
-            time.sleep(random.uniform(0.8, 1.2))
+            #time.sleep(random.uniform(0.8, 1.2))
 
     def clear(self):
         """Clear, i.e. delete information (processes) from current run."""
@@ -231,11 +231,11 @@ class LocalProvider(BaseProvider):
 
     def cost(self, workers=1):
         """
-        Compute cost associated to the input number of workers (in addition to running ones).
+        Compute cost associated to the input number of workers.
         Cost is constant, then increases steeply when
         the total number of processes (workers times MPI) reaches the number of CPU counts.
         """
-        nprocs = workers * self.mpiprocs_per_worker + self.nworkers()
+        nprocs = workers * self.mpiprocs_per_worker
         ncpus = os.cpu_count()
         if nprocs < ncpus:
             return 0.
@@ -299,9 +299,7 @@ class SlurmProvider(BaseProvider):
         Template to run a command with MPI.
     """
     name = 'slurm'
-    _defaults = {**BaseProvider._defaults, 'account': 'desi', 'constraint': 'cpu', 'qos': 'regular', 'time': '01:00:00', 'nodes_per_worker': 1., 'mpiprocs_per_worker': 1,
-                 'output': '/dev/null', 'error': '/dev/null', 'mpiexec': 'srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', 'signal': 'SIGTERM@30',
-                 'killed_at_timeout': None, 'kwargs': {}}
+    _defaults = {**BaseProvider._defaults, 'account': 'desi', 'constraint': 'cpu', 'qos': 'regular', 'time': '01:00:00', 'nodes_per_worker': 1., 'mpiprocs_per_worker': 1, 'output': '/dev/null', 'error': '/dev/null', 'mpiexec': 'srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', 'signal': 'SIGTERM@30', 'killed_at_timeout': None, 'kwargs': {}}
 
     def update(self, **kwargs):
         """Update provider with input attributes."""
@@ -343,7 +341,7 @@ class SlurmProvider(BaseProvider):
         """Clear, i.e. delete information (processes) from current run."""
         self.processes = []
 
-    @time_lru_cache()
+    @time_lru_cache(dt=2.)
     def jobids(self, state=('PENDING', 'RUNNING'), return_nworkers=False):
         """List of workers."""
         allowed_state = ['PENDING', 'RUNNING']
@@ -377,6 +375,7 @@ class SlurmProvider(BaseProvider):
             return [(jobid, workers) for jobid, nodes, workers in self.processes if jobid in jobids]
         return jobids
 
+    @time_lru_cache(dt=2.)
     def nworkers(self, of='workers', state=('PENDING', 'RUNNING')):
         """Number of (pending or running) workers."""
         jobids = self.jobids(state=state)
@@ -393,8 +392,8 @@ class SlurmProvider(BaseProvider):
         return math.ceil(self.nodes_per_worker * workers)
 
     def cost(self, workers=1):
-        """Cost required for input number of workers (in addition to running ones)."""
-        return self.nodes(workers=workers) + self.nworkers(of='nodes')
+        """Cost required for input number of workers."""
+        return self.nodes(workers=workers)
 
     @property
     def timeout(self):
@@ -430,8 +429,8 @@ class NERSCProvider(SlurmProvider):
             if 'gpus-per-node' not in self.kwargs: self.kwargs['gpus-per-node'] = 4
 
     def cost(self, workers=1):
-        """Cost required for input number of workers (in addition to running ones)."""
-        nodes = self.nodes(workers=workers) + self.nworkers(of='nodes')
+        """Cost required for input number of workers."""
+        nodes = self.nodes(workers=workers)
         if nodes < self.threshold_nodes:
             return 0
         return nodes - self.threshold_nodes

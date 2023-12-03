@@ -103,7 +103,9 @@ class SimpleScheduler(BaseScheduler):
 
     def __call__(self, cmd, ntasks=None):
         if ntasks is None: ntasks = self.max_workers
+        # print('BEFORE', ntasks)
         ntasks = ntasks - self.provider.nworkers(state='PENDING')
+        # print('AFTER', ntasks, self.max_workers)
         if ntasks == 0:
             return 0
         # Too many jobs launched, let's kill some
@@ -118,14 +120,16 @@ class SimpleScheduler(BaseScheduler):
             return -nkill
 
         max_workers = min(ntasks, self.max_workers)
-        best_workers, best_cost = 0, float('inf')
-        for workers in range(1, max_workers + 1):
-            # print(workers, self.provider.nworkers(), self.max_workers)
-            if (workers + self.provider.nworkers()) > self.max_workers:
-                break
-            cost = self.provider.cost(workers=workers)
-            if cost <= best_cost:
-                best_workers, best_cost = workers, cost
-        if best_workers:
+        workers, current_nworkers = 0, self.provider.nworkers()
+        while (workers + current_nworkers) <= self.max_workers:
+            ndiff = max_workers - workers
+            if ndiff <= 0: break
+            best_workers, best_cost = 0, float('inf')
+            for best in range(1, ndiff + 1):
+                cost = self.provider.cost(workers=best)
+                if cost <= best_cost:
+                    best_workers, best_cost = best, cost
             self.provider(cmd, workers=best_workers)
-        return best_workers
+            workers += best_workers
+        # print(workers, self.provider.name, getattr(self.provider, 'constraint', None))
+        return workers
