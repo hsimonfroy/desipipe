@@ -207,17 +207,17 @@ class LocalProvider(BaseProvider):
     def jobids(self, state=('PENDING', 'RUNNING'), return_nworkers=False):
         """List of workers."""
         allowed_state = ['PENDING', 'RUNNING']
-        if utils.is_sequence(state): state = [s.upper() for s in state]
-        else: state = [state.upper()]
-        for s in state:
-            if s == 'ALL':
+        if utils.is_sequence(state): states = [s.upper() for s in state]
+        else: states = [state.upper()]
+        for state in states:
+            if state == 'ALL':
                 if return_nworkers:
                     return [(None, 1)] * len(self.processes)
                 return [None] * len(self.processes)
-            if s not in allowed_state:
-                raise ValueError('state must be one of {}, found {}'.format(allowed_state, s))
+            if state not in allowed_state:
+                raise ValueError('state must be one of {}, found {}'.format(allowed_state, state))
 
-        if 'RUNNING' in state:
+        if 'RUNNING' in states:
             nrunning = sum(process.poll() is None for process in self.processes)
             if return_nworkers:
                 return [(None, 1)] * nrunning
@@ -347,16 +347,16 @@ class SlurmProvider(BaseProvider):
     def jobids(self, state=('PENDING', 'RUNNING'), return_nworkers=False):
         """List of workers."""
         allowed_state = ['PENDING', 'RUNNING']
-        if utils.is_sequence(state): state = [s.upper() for s in state]
-        else: state = [state.upper()]
+        if utils.is_sequence(state): states = [s.upper() for s in state]
+        else: states = [state.upper()]
 
-        for s in state:
-            if s == 'ALL':
+        for state in states:
+            if state == 'ALL':
                 if return_nworkers:
                     return [(jobid, workers) for jobid, nodes, workers in self.processes]
                 return [jobid for jobid, nodes, workers in self.processes]
-            if s not in allowed_state:
-                raise ValueError('state must be one of {}, found {}'.format(allowed_state, s))
+            if state not in allowed_state:
+                raise ValueError('state must be one of {}, found {}'.format(allowed_state, state))
         try:
             sqs = subprocess.run(['sqs'], check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')
         except subprocess.CalledProcessError:
@@ -366,11 +366,11 @@ class SlurmProvider(BaseProvider):
             jobids = []
             for line in sqs[1:]:
                 if line:
-                    state = line[istate:].strip()
+                    state = line[istate:].split()[0].strip()
                     jobid = line.split()[0].strip()
-                    if 'RUNNING' in state and state == 'R':
+                    if 'RUNNING' in states and state == 'R':
                         jobids.append(jobid)
-                    elif 'PENDING' in state and state not in ('GC', 'R'):
+                    elif 'PENDING' in states and state not in ('GC', 'R'):
                         jobids.append(jobid)
             self._jobids = jobids = [jobid[0] for jobid in self.processes if jobid[0] in jobids]
         if return_nworkers:
