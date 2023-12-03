@@ -31,6 +31,7 @@ from .provider import get_provider
 
 task_states = ['WAITING',       # Waiting for requirements (other tasks) to finish
                'PENDING',       # Eligible to be selected and run
+               'LAUNCHED',      # Sent for processing
                'RUNNING',       # Running right now
                'SUCCEEDED',     # Finished with errno = 0
                'FAILED',        # Finished with errno != 0
@@ -279,7 +280,7 @@ class Task(BaseClass):
         infered from :class:`Future` instances passed to :attr:`args` and :attr:`kwargs`.
 
     state : str
-        Task state, one of :attr:`TaskState.ALL`, i.e. ('WAITING', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'KILLED', 'UNKNOWN').
+        Task state, one of :attr:`TaskState.ALL`, i.e. ('WAITING', 'PENDING', 'LAUNCHED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'KILLED', 'UNKNOWN').
 
     jobid : str
         Job identifier (not used for now).
@@ -299,10 +300,13 @@ class Task(BaseClass):
     result : object
         Value returned by :class:`BaseApp.func`.
 
+    t0 : float
+        Start time of :class:`BaseApp.run`.
+
     dtime : float
         Running time of :class:`BaseApp.run`.
     """
-    _attrs = ['id', 'app', 'index', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'versions', 'result', 'dtime']
+    _attrs = ['id', 'app', 'index', 'kwargs', 'require_ids', 'state', 'jobid', 'errno', 'err', 'out', 'versions', 'result', 't0', 'dtime']
 
     def __init__(self, app, kwargs=None, state=None):
         """
@@ -320,8 +324,8 @@ class Task(BaseClass):
             Task state. Defaults to 'WAITING' if this task requires others to be run,
             else to 'PENDING'.
         """
-        self.result = None
-        self.dtime = None
+        self.result = self.dtime = None
+        self.t0 = -1.
         self.update(app=app, kwargs=kwargs, state=state, jobid='', errno=None, err='', out='')
 
     def update(self, **kwargs):
@@ -354,7 +358,7 @@ class Task(BaseClass):
                     self.state = TaskState.PENDING
         if require_id:
             self.id = unique_id(uid)  # unique ID, tied to the given app, args and kwargs
-        for name in ['jobid', 'errno', 'err', 'out', 'result', 'dtime']:
+        for name in ['jobid', 'errno', 'err', 'out', 'result', 't0', 'dtime']:
             if name in kwargs:
                 setattr(self, name, kwargs.pop(name))
         if kwargs:
@@ -480,7 +484,7 @@ def _make_getter(name):
         except AttributeError:
             while True:
                 if (time.time() - t0) < timeout:
-                    if self.queue.tasks(tid=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING, TaskState.RUNNING, TaskState.UNKNOWN):
+                    if self.queue.tasks(tid=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING, TaskState.LAUNCHED, TaskState.RUNNING, TaskState.UNKNOWN):
                         # print(self.queue.tasks(self.id)[0].err)
                         tmp = getattr(self.queue.tasks(tid=self.id), name)
                         setattr(self, '_' + name, tmp)
@@ -595,7 +599,8 @@ class Queue(BaseClass):
                     task     TEXT,
                     state    TEXT,
                     mid      TEXT,  -- task manager id
-                    jobid    TEXT
+                    jobid    TEXT,
+                    t0       REAL
                 );
                 -- Dependencies table.  Multiple entries for multiple deps.
                 CREATE TABLE requires (
@@ -755,7 +760,7 @@ class Queue(BaseClass):
         isscalar = isinstance(tasks, Task)
         if isscalar:
             tasks = [tasks]
-        ids, requires, managers, states, tasks_serialized, jobids, futures = [], [], [], [], [], [], []
+        ids, requires, managers, states, tasks_serialized, jobids, t0s, futures = [], [], [], [], [], [], [], []
         self._get_lock()
         for task in tasks:
             futures.append(Future(queue=self, tid=task.id))
@@ -774,10 +779,11 @@ class Queue(BaseClass):
             states.append(task.state)
             tasks_serialized.append(TaskPickler.dumps(task))
             jobids.append(task.jobid)
+            t0s.append(task.t0)
         query = 'INSERT'
         if replace: query = 'REPLACE'
-        query += ' INTO tasks (tid, task, state, mid, jobid) VALUES (?,?,?,?,?)'
-        self._query([query, zip(ids, tasks_serialized, states, [tm.id for tm in managers], jobids)], many=True)
+        query += ' INTO tasks (tid, task, state, mid, jobid, t0) VALUES (?,?,?,?,?,?)'
+        self._query([query, zip(ids, tasks_serialized, states, [tm.id for tm in managers], jobids, t0s)], many=True)
         for tid, requires in zip(ids, requires):
             self._add_requires(tid, requires)
         for manager in managers:
@@ -838,27 +844,22 @@ class Queue(BaseClass):
         """Resume queue, i.e. set state to 'ACTIVE'."""
         self.state = QueueState.ACTIVE
 
-    def set_task_state(self, tid, state):
+    def set_task_state(self, tid, state, jobid=None, t0=None):
         """Set the state of task with input ID ``tid`` to ``state``."""
         try:
             self._get_lock()
             query = 'UPDATE tasks SET state=? WHERE tid=?'
             self._query([query, (state, tid)])
+            if jobid is not None:
+                query = 'UPDATE tasks SET jobid=? WHERE tid=?'
+                self._query([query, (jobid, tid)])
+            if t0 is not None:
+                query = 'UPDATE tasks SET t0=? WHERE tid=?'
+                self._query([query, (float(t0), tid)])
             self.db.commit()
 
             if state in (TaskState.SUCCEEDED, TaskState.FAILED):
                 self._update_waiting_tasks(tid)
-
-        finally:
-            self._release_lock()
-
-    def set_task_jobid(self, tid, jobid):
-        """Set the jobid of task with input ID ``tid`` to ``jobid``."""
-        try:
-            self._get_lock()
-            query = 'UPDATE tasks SET jobid=? WHERE tid=?'
-            self._query([query, (jobid, tid)])
-            self.db.commit()
 
         finally:
             self._release_lock()
@@ -887,8 +888,8 @@ class Queue(BaseClass):
                 self._release_lock()
                 return
 
-        query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.tid WHERE d.tid=? AND t.state IN (?, ?, ?, ?, ?, ?)'
-        row = self._query([query, (tid, TaskState.WAITING, TaskState.PENDING, TaskState.RUNNING, TaskState.FAILED, TaskState.KILLED, TaskState.UNKNOWN)]).fetchone()
+        query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.tid WHERE d.tid=? AND t.state IN (?, ?, ?, ?, ?, ?, ?)'
+        row = self._query([query, (tid, TaskState.WAITING, TaskState.PENDING, TaskState.LAUNCHED, TaskState.RUNNING, TaskState.FAILED, TaskState.KILLED, TaskState.UNKNOWN)]).fetchone()
         self._release_lock()
         if row is None:
             return
@@ -956,7 +957,7 @@ class Queue(BaseClass):
 
         property : str, list, default=None
             If not ``None``, instead of returning task(s), return this property
-            (one of 'tid', 'state', 'mid', 'jobid', 'task_manager').
+            (one of 'tid', 'state', 'mid', 'jobid', 't0', 'task_manager').
 
         Returns
         -------
@@ -979,7 +980,7 @@ class Queue(BaseClass):
             select.append('mid IN {}'.format(_to_str(mid)))
         if jobid:
             select.append('jobid IN {}'.format(_to_str(jobid)))
-        query = 'SELECT task, tid, state, mid, jobid FROM tasks'
+        query = 'SELECT task, tid, state, mid, jobid, t0 FROM tasks'
         if select: query += ' WHERE {}'.format(' AND '.join(select))
         tasks = self._query(query)
         if one:
@@ -995,7 +996,7 @@ class Queue(BaseClass):
             one = True
         toret = []
         for task in tasks:
-            (ptask, tid, state, mid, jobid), task = task, None
+            (ptask, tid, state, mid, jobid, t0), task = task, None
             if name or index or not property or any(prop in ['index', 'name'] for prop in property):
                 task = TaskUnpickler.loads(ptask, queue=self)
                 if task.id != tid:
@@ -1020,6 +1021,9 @@ class Queue(BaseClass):
                 if prop == 'jobid':
                     props.append(jobid)
                     continue
+                if prop == 't0':
+                    props.append(float(t0))
+                    continue
                 if prop == 'index':
                     props.append(task.index)
                     continue
@@ -1034,8 +1038,7 @@ class Queue(BaseClass):
             if property:
                 toret.append(props[0] if one_property else tuple(props))
                 continue
-            task.update(state=state)
-            task.update(jobid=jobid)
+            task.update(state=state, jobid=jobid, t0=t0)
             task.app.task_manager = task_manager
             toret.append(task)
         if one:
@@ -1044,13 +1047,13 @@ class Queue(BaseClass):
             return None
         return toret
 
-    def pop(self, state=TaskState.PENDING, **kwargs):
+    def pop(self, state=(TaskState.LAUNCHED, TaskState.PENDING), **kwargs):
         """
-        Retrieve a task to be run (i.e. in 'PENDING' state).
+        Retrieve a task to be run (i.e. in 'LAUNCHED' or 'PENDING' state).
 
         Parameters
         ----------
-        state : str, list, default='PENDING'
+        state : str, list, default=('LAUNCHED', 'PENDING')
             Select a task with this state.
 
         **kwargs : dict
@@ -1073,7 +1076,7 @@ class Queue(BaseClass):
         if task is None:
             return None
         jobid = task.app.task_manager.provider.jobid()
-        task.update(state=TaskState.RUNNING, jobid=jobid)
+        task.update(state=TaskState.RUNNING, jobid=jobid, t0=time.time())
         return task
 
     def managers(self, mid=None, property=None):
@@ -1606,7 +1609,7 @@ class TaskManager(BaseClass):
     def spawn(self, *args, **kwargs):
         """Distribute tasks to workers."""
         self.scheduler.update(provider=self.provider)
-        self.scheduler(*args, **kwargs)
+        return self.scheduler(*args, **kwargs)
 
 
 def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm=None, mpisplits=None):
@@ -1725,8 +1728,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
                 if stop_after is not None and ntasks[tm.id] > stop_after:
                     task = None
                 else:
-                    queue.set_task_state(task.id, TaskState.RUNNING)
-                    queue.set_task_jobid(task.id, task.jobid)
+                    queue.set_task_state(task.id, TaskState.RUNNING, jobid=task.jobid, t0=task.t0)
             stask = TaskPickler.dumps(task, reduce_app=None)
         if mpicomm is not None:
             killed_at_timeout, _stream_out_err = mpicomm.bcast((killed_at_timeout, _stream_out_err), root=0)
@@ -1779,7 +1781,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
         return
 
     t0 = time.time()
-    qmanagers, running_times, launched_tids = [{} for i in range(len(queues))], [{} for i in range(len(queues))], [[] for i in range(len(queues))]
+    qmanagers = [{} for i in range(len(queues))]
     stop = False
     nsteps, stop_after_nsteps = 0, 10
     while True:
@@ -1791,43 +1793,36 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
             nsteps = 0
             stop = True
         nsteps += 1
-        for iq, (queue, managers) in enumerate(zip(queues, qmanagers)):
+        for (queue, managers) in zip(queues, qmanagers):
             queue.add_process(os.getpid(), provider='local')
             if queue.paused:
                 continue
             if mode == 'stop_at_error' and queue.counts(state=TaskState.FAILED):
                 continue
-            if queue.counts(state=(TaskState.PENDING, TaskState.RUNNING)):
+            if queue.counts(state=(TaskState.PENDING, TaskState.LAUNCHED, TaskState.RUNNING)):
                 stop = False
-            running_time = running_times[iq]
-            new_running_time = {}
             for manager in queue.managers():
                 if manager.id not in managers:
                     if max_workers is not None:
                         manager.scheduler.update(max_workers=max_workers)
                     managers[manager.id] = manager
                 manager = managers[manager.id]  # such that manager.provider keeps track of current processes
-                if not queue.counts(state=(TaskState.PENDING, TaskState.RUNNING), mid=manager.id):
-                    manager.provider.kill(*manager.provider.jobids())  # no PENDING / RUNNING task remaining, we can kill all launched jobs
+                if not queue.counts(state=(TaskState.PENDING, TaskState.LAUNCHED, TaskState.RUNNING), mid=manager.id):
+                    manager.provider.kill(*manager.provider.jobids())  # no PENDING / LAUNCHED / RUNNING task remaining, we can kill all launched jobs
                     manager.provider.clear()
-                    launched_tids[iq] = []
-                for tid in queue.tasks(property='tid', mid=manager.id, state=TaskState.RUNNING):
-                    t0 = time.time()
-                    new_running_time[tid] = running_time.get(tid, t0)
-                    if t0 - new_running_time[tid] > manager.provider.timeout:
+                for tid, tt0 in queue.tasks(property=('tid', 't0'), mid=manager.id, state=TaskState.RUNNING):
+                    if time.time() - tt0 > manager.provider.timeout:
                         queue.set_task_state(tid, TaskState.UNKNOWN)
                 tids = queue.tasks(mid=manager.id, state=TaskState.PENDING, property='tid')
-                tids = [tid for tid in tids if tid not in launched_tids[iq]]
                 # print(ntasks, queue.counts(mid=manager.id, state=TaskState.PENDING), queue.counts(mid=manager.id, state=TaskState.WAITING), stop, flush=True)
                 if tids:
                     # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
-                    manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=len(tids))
-                    launched_tids[iq] += tids
+                    nworkers = manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=len(tids))
+                    for tid in tids[:nworkers]:
+                        queue.set_task_state(tid, TaskState.LAUNCHED)
                     for jobid in manager.provider.jobids():
                         queue.add_process(jobid, provider=manager.provider)
-            running_times[iq] = new_running_time  # to free some space
         time.sleep(timestep * random.uniform(0.8, 1.2))
-    # print('TERMINATED')
 
 
 def kill(queue=None, all=False, provider=None, jobid=None, state=None, **kwargs):
@@ -1863,7 +1858,7 @@ def kill(queue=None, all=False, provider=None, jobid=None, state=None, **kwargs)
     if jobid is not None:
         jobid = _make_list(jobid, tp=str)[0]
     elif state is None:
-        state = TaskState.RUNNING
+        state = (TaskState.LAUNCHED, TaskState.RUNNING)
     if queue is None:
         if jobid is None:
             raise ValueError('Provide at least queue or jobid')

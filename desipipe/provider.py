@@ -6,6 +6,7 @@ import subprocess
 import functools
 
 from .utils import BaseClass
+from . import utils
 
 
 def get_ttl_hash(dt=1):
@@ -97,13 +98,13 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
         """Clear, i.e. delete information (typically job IDs) from current run."""
         pass
 
-    def jobids(self):
+    def jobids(self, state=('PENDING', 'RUNNING'), return_nworkers=False):
         """Current job IDs."""
         return []
 
-    def nrunning(self):
+    def nworkers(self, of='workers', state=('PENDING', 'RUNNING')):
         """Number of running workers."""
-        return 0
+        return len(self.jobids(state=state))
 
     def cost(self, workers=1):
         """
@@ -203,9 +204,30 @@ class LocalProvider(BaseProvider):
         self.processes = []
 
     @time_lru_cache()
-    def nrunning(self):
+    def jobids(self, state=('PENDING', 'RUNNING'), return_nworkers=False):
+        """List of workers."""
+        allowed_state = ['PENDING', 'RUNNING']
+        if utils.is_sequence(state): state = [s.upper() for s in state]
+        else: state = [state.upper()]
+        for s in state:
+            if s == 'ALL':
+                if return_nworkers:
+                    return [(None, 1)] * len(self.processes)
+                return [None] * len(self.processes)
+            if s not in allowed_state:
+                raise ValueError('state must be one of {}, found {}'.format(allowed_state, s))
+
+        if 'RUNNING' in state:
+            nrunning = sum(process.poll() is None for process in self.processes)
+            if return_nworkers:
+                return [(None, 1)] * nrunning
+            return [None] * nrunning
+        return []
+
+    @time_lru_cache()
+    def nworkers(self, of='workers', state=('PENDING', 'RUNNING')):
         """Number of running workers."""
-        return sum(process.poll() is None for process in self.processes)
+        return len(self.jobids(state=state))
 
     def cost(self, workers=1):
         """
@@ -213,7 +235,7 @@ class LocalProvider(BaseProvider):
         Cost is constant, then increases steeply when
         the total number of processes (workers times MPI) reaches the number of CPU counts.
         """
-        nprocs = workers * self.mpiprocs_per_worker + self.nrunning()
+        nprocs = workers * self.mpiprocs_per_worker + self.nworkers()
         ncpus = os.cpu_count()
         if nprocs < ncpus:
             return 0.
@@ -321,16 +343,20 @@ class SlurmProvider(BaseProvider):
         """Clear, i.e. delete information (processes) from current run."""
         self.processes = []
 
-    def jobids(self):
-        """Current job IDs."""
-        return [process[0] for process in self.processes]
-
     @time_lru_cache()
-    def nrunning(self, of='workers'):
-        """Number of running workers."""
-        allowed_of = ['workers', 'nodes']
-        if of not in allowed_of:
-            raise ValueError('of must be one of {}, found {}'.format(allowed_of, of))
+    def jobids(self, state=('PENDING', 'RUNNING'), return_nworkers=False):
+        """List of workers."""
+        allowed_state = ['PENDING', 'RUNNING']
+        if utils.is_sequence(state): state = [s.upper() for s in state]
+        else: state = [state.upper()]
+
+        for s in state:
+            if s == 'ALL':
+                if return_nworkers:
+                    return [(jobid, workers) for jobid, nodes, workers in self.processes]
+                return [jobid for jobid, nodes, workers in self.processes]
+            if s not in allowed_state:
+                raise ValueError('state must be one of {}, found {}'.format(allowed_state, s))
         try:
             sqs = subprocess.run(['sqs'], check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')
         except subprocess.CalledProcessError:
@@ -340,11 +366,20 @@ class SlurmProvider(BaseProvider):
             jobids = []
             for line in sqs[1:]:
                 if line:
-                    state = line[istate:]
-                    if not state.startswith('CG'):
-                        jobids.append(line.split()[0].strip())
-            self._jobids = jobids
-        # print(jobids, self.processes)
+                    state = line[istate:].strip()
+                    jobid = line.split()[0].strip()
+                    if 'RUNNING' in state and state == 'R':
+                        jobids.append(jobid)
+                    elif 'PENDING' in state and state not in ('GC', 'R'):
+                        jobids.append(jobid)
+            self._jobids = jobids = [jobid[0] for jobid in self.processes if jobid[0] in jobids]
+        if return_nworkers:
+            return [(jobid, workers) for jobid, nodes, workers in self.processes if jobid in jobids]
+        return jobids
+
+    def nworkers(self, of='workers', state=('PENDING', 'RUNNING')):
+        """Number of (pending or running) workers."""
+        jobids = self.jobids(state=state)
         if of == 'workers':
             return sum(workers * (jobid in jobids) for jobid, nodes, workers in self.processes)
         return sum(nodes * (jobid in jobids) for jobid, nodes, workers in self.processes)
@@ -359,7 +394,7 @@ class SlurmProvider(BaseProvider):
 
     def cost(self, workers=1):
         """Cost required for input number of workers (in addition to running ones)."""
-        return self.nodes(workers=workers) + self.nrunning(of='nodes')
+        return self.nodes(workers=workers) + self.nworkers(of='nodes')
 
     @property
     def timeout(self):
@@ -396,7 +431,7 @@ class NERSCProvider(SlurmProvider):
 
     def cost(self, workers=1):
         """Cost required for input number of workers (in addition to running ones)."""
-        nodes = self.nodes(workers=workers) + self.nrunning(of='nodes')
+        nodes = self.nodes(workers=workers) + self.nworkers(of='nodes')
         if nodes < self.threshold_nodes:
             return 0
         return nodes - self.threshold_nodes
