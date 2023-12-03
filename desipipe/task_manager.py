@@ -31,7 +31,6 @@ from .provider import get_provider
 
 task_states = ['WAITING',       # Waiting for requirements (other tasks) to finish
                'PENDING',       # Eligible to be selected and run
-               'LAUNCHED',      # Sent for processing
                'RUNNING',       # Running right now
                'SUCCEEDED',     # Finished with errno = 0
                'FAILED',        # Finished with errno != 0
@@ -280,7 +279,7 @@ class Task(BaseClass):
         infered from :class:`Future` instances passed to :attr:`args` and :attr:`kwargs`.
 
     state : str
-        Task state, one of :attr:`TaskState.ALL`, i.e. ('WAITING', 'PENDING', 'LAUNCHED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'KILLED', 'UNKNOWN').
+        Task state, one of :attr:`TaskState.ALL`, i.e. ('WAITING', 'PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'KILLED', 'UNKNOWN').
 
     jobid : str
         Job identifier (not used for now).
@@ -484,7 +483,7 @@ def _make_getter(name):
         except AttributeError:
             while True:
                 if (time.time() - t0) < timeout:
-                    if self.queue.tasks(tid=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING, TaskState.LAUNCHED, TaskState.RUNNING, TaskState.UNKNOWN):
+                    if self.queue.tasks(tid=self.id, property='state') not in (TaskState.WAITING, TaskState.PENDING, TaskState.RUNNING, TaskState.UNKNOWN):
                         # print(self.queue.tasks(self.id)[0].err)
                         tmp = getattr(self.queue.tasks(tid=self.id), name)
                         setattr(self, '_' + name, tmp)
@@ -732,9 +731,11 @@ class Queue(BaseClass):
         pid = str(pid)
         provider = str(getattr(provider, 'name', provider))
         try:
-            self._get_lock()
+            self._get_lock(timeout=20.)
             self._query([query, (pid, provider)])
             self.db.commit()
+        except:
+            pass
         finally:
             self._release_lock()
 
@@ -888,8 +889,8 @@ class Queue(BaseClass):
                 self._release_lock()
                 return
 
-        query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.tid WHERE d.tid=? AND t.state IN (?, ?, ?, ?, ?, ?, ?)'
-        row = self._query([query, (tid, TaskState.WAITING, TaskState.PENDING, TaskState.LAUNCHED, TaskState.RUNNING, TaskState.FAILED, TaskState.KILLED, TaskState.UNKNOWN)]).fetchone()
+        query = 'SELECT COUNT(d.require) FROM requires d JOIN tasks t ON d.require = t.tid WHERE d.tid=? AND t.state IN (?, ?, ?, ?, ?, ?)'
+        row = self._query([query, (tid, TaskState.WAITING, TaskState.PENDING, TaskState.RUNNING, TaskState.FAILED, TaskState.KILLED, TaskState.UNKNOWN)]).fetchone()
         self._release_lock()
         if row is None:
             return
@@ -1047,13 +1048,13 @@ class Queue(BaseClass):
             return None
         return toret
 
-    def pop(self, state=(TaskState.LAUNCHED, TaskState.PENDING), **kwargs):
+    def pop(self, state=TaskState.PENDING, **kwargs):
         """
-        Retrieve a task to be run (i.e. in 'LAUNCHED' or 'PENDING' state).
+        Retrieve a task to be run (i.e. in 'PENDING' state).
 
         Parameters
         ----------
-        state : str, list, default=('LAUNCHED', 'PENDING')
+        state : str, list, default='PENDING'
             Select a task with this state.
 
         **kwargs : dict
@@ -1799,7 +1800,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
                 continue
             if mode == 'stop_at_error' and queue.counts(state=TaskState.FAILED):
                 continue
-            if queue.counts(state=(TaskState.PENDING, TaskState.LAUNCHED, TaskState.RUNNING)):
+            if queue.counts(state=(TaskState.PENDING, TaskState.RUNNING)):
                 stop = False
             for manager in queue.managers():
                 if manager.id not in managers:
@@ -1807,21 +1808,17 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
                         manager.scheduler.update(max_workers=max_workers)
                     managers[manager.id] = manager
                 manager = managers[manager.id]  # such that manager.provider keeps track of current processes
-                if not queue.counts(state=(TaskState.PENDING, TaskState.LAUNCHED, TaskState.RUNNING), mid=manager.id):
-                    manager.provider.kill(*manager.provider.jobids())  # no PENDING / LAUNCHED / RUNNING task remaining, we can kill all launched jobs
-                    manager.provider.clear()
                 for tid, tt0 in queue.tasks(property=('tid', 't0'), mid=manager.id, state=TaskState.RUNNING):
                     if time.time() - tt0 > manager.provider.timeout:
                         queue.set_task_state(tid, TaskState.UNKNOWN)
-                tids = queue.tasks(mid=manager.id, state=TaskState.PENDING, property='tid')
+                ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING)
                 # print(ntasks, queue.counts(mid=manager.id, state=TaskState.PENDING), queue.counts(mid=manager.id, state=TaskState.WAITING), stop, flush=True)
-                if tids:
+                if ntasks:
                     # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
-                    nworkers = manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=len(tids))
-                    for tid in tids[:nworkers]:
-                        queue.set_task_state(tid, TaskState.LAUNCHED)
+                    manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=ntasks)
                     for jobid in manager.provider.jobids():
-                        queue.add_process(jobid, provider=manager.provider)
+                        if jobid is not None:
+                            queue.add_process(jobid, provider=manager.provider)
         time.sleep(timestep * random.uniform(0.8, 1.2))
 
 
@@ -1858,7 +1855,7 @@ def kill(queue=None, all=False, provider=None, jobid=None, state=None, **kwargs)
     if jobid is not None:
         jobid = _make_list(jobid, tp=str)[0]
     elif state is None:
-        state = (TaskState.LAUNCHED, TaskState.RUNNING)
+        state = TaskState.RUNNING
     if queue is None:
         if jobid is None:
             raise ValueError('Provide at least queue or jobid')

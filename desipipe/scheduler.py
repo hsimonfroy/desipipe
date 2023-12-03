@@ -104,6 +104,8 @@ class SimpleScheduler(BaseScheduler):
     def __call__(self, cmd, ntasks=None):
         if ntasks is None: ntasks = self.max_workers
         ntasks = ntasks - self.provider.nworkers(state='PENDING')
+        if ntasks == 0:
+            return 0
         # Too many jobs launched, let's kill some
         if ntasks < 0:
             nkill = 0
