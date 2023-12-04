@@ -73,7 +73,7 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
 
     @classmethod
     def jobid(cls):
-        """Return job ID."""
+        """This worker's job ID."""
         return 0
 
     @classmethod
@@ -99,7 +99,7 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
         pass
 
     def jobids(self, state=('PENDING', 'RUNNING'), return_nworkers=False):
-        """Current job IDs."""
+        """List of workers, from oldest to newest."""
         return []
 
     def nworkers(self, of='workers', state=('PENDING', 'RUNNING')):
@@ -175,7 +175,7 @@ class LocalProvider(BaseProvider):
 
     @classmethod
     def jobid(cls):
-        """Return job ID."""
+        """This worker's job ID."""
         return os.getpid()
 
     @classmethod
@@ -205,7 +205,7 @@ class LocalProvider(BaseProvider):
 
     @time_lru_cache()
     def jobids(self, state=('PENDING', 'RUNNING'), return_nworkers=False):
-        """List of workers."""
+        """List of workers, from oldest to newest."""
         allowed_state = ['PENDING', 'RUNNING']
         if utils.is_sequence(state): states = [s.upper() for s in state]
         else: states = [state.upper()]
@@ -308,7 +308,7 @@ class SlurmProvider(BaseProvider):
 
     @classmethod
     def jobid(cls):
-        """Return job ID."""
+        """This worker's job ID."""
         return os.environ.get('SLURM_JOB_ID', '')
 
     @classmethod
@@ -343,7 +343,7 @@ class SlurmProvider(BaseProvider):
 
     @time_lru_cache(dt=2.)
     def jobids(self, state=('PENDING', 'RUNNING'), return_nworkers=False):
-        """List of workers."""
+        """List of workers, from oldest to newest."""
         allowed_state = ['PENDING', 'RUNNING']
         if utils.is_sequence(state): states = [s.upper() for s in state]
         else: states = [state.upper()]

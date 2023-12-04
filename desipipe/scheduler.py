@@ -112,7 +112,7 @@ class SimpleScheduler(BaseScheduler):
         if ntasks < 0:
             nkill = 0
             tokill = []
-            for jobid, nworkers in self.provider.jobids(state='PENDING', return_nworkers=True):
+            for jobid, nworkers in list(self.provider.jobids(state='PENDING', return_nworkers=True))[::-1]:  # start from newest
                 if nkill + nworkers <= abs(ntasks) and jobid is not None:
                     tokill.append(jobid)
                     nkill += nworkers

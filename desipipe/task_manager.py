@@ -731,7 +731,7 @@ class Queue(BaseClass):
         pid = str(pid)
         provider = str(getattr(provider, 'name', provider))
         try:
-            self._get_lock(timeout=20.)
+            self._get_lock()
             self._query([query, (pid, provider)])
             self.db.commit()
         except:
@@ -800,7 +800,7 @@ class Queue(BaseClass):
             return futures[0]
         return futures
 
-    def _get_lock(self, timeout=10., timestep=1.):
+    def _get_lock(self, timeout=20., timestep=1.):
         # """Get lock on the data base."""
         t0 = time.time()
         while True:
@@ -1695,14 +1695,16 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
 
     global t0, killed
     killed = False
-    timestep = 2.
+    timestep = 10.
 
     def callback(out, err):
         global t0, killed
         if killed: return
         if (mpicomm is None or mpicomm.rank == 0) and time.time() - t0 > timestep:
-            task.out, task.err = out, err
-            queue.add(task, replace=True)
+            if (out, err) != (task.out, task.err):
+                task.out, task.err = out, err
+                try: queue.add(task, replace=True)
+                except: pass
             t0 = time.time()
 
     jobid = None
@@ -1729,7 +1731,8 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
                 if stop_after is not None and ntasks[tm.id] > stop_after:
                     task = None
                 else:
-                    queue.set_task_state(task.id, TaskState.RUNNING, jobid=task.jobid, t0=task.t0)
+                    try: queue.set_task_state(task.id, TaskState.RUNNING, jobid=task.jobid, t0=task.t0)
+                    except: pass
             stask = TaskPickler.dumps(task, reduce_app=None)
         if mpicomm is not None:
             killed_at_timeout, _stream_out_err = mpicomm.bcast((killed_at_timeout, _stream_out_err), root=0)
@@ -1746,7 +1749,8 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         task.run(**kwargs)
         if mpicomm is not None: mpicomm.barrier()
         if mpicomm is None or mpicomm.rank == 0:
-            queue.add(task, replace=True)
+            try: queue.add(task, replace=True)
+            except: pass
         itask += 1
         if mode == 'stop_at_error' and task.state == TaskState.FAILED:
             break
@@ -1782,8 +1786,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
         return
 
     t0 = time.time()
-    qmanagers = [{} for i in range(len(queues))]
-    added_processes = set()
+    qmanagers, qadded_processes = [{} for i in range(len(queues))], [set() for i in range(len(queues))]
     stop = False
     nsteps, stop_after_nsteps = 0, 10
     while True:
@@ -1795,8 +1798,11 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
             nsteps = 0
             stop = True
         nsteps += 1
-        for (queue, managers) in zip(queues, qmanagers):
-            queue.add_process(os.getpid(), provider='local')
+        for (queue, managers, added_processes) in zip(queues, qmanagers, qadded_processes):
+            pid = os.getpid()
+            if ('local', pid) not in added_processes:
+                added_processes.add(('local', pid))
+                queue.add_process(pid, provider='local')
             if queue.paused:
                 continue
             if mode == 'stop_at_error' and queue.counts(state=TaskState.FAILED):
