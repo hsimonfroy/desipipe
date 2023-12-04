@@ -1877,15 +1877,15 @@ def kill(queue=None, all=False, provider=None, jobid=None, state=None, **kwargs)
             for task in queue.tasks(jobid=jobid, one=False, state=state, **kwargs):
                 if not bool(task.jobid): continue
                 if provider is not None and provider.__class__ is not task.app.task_manager.provider.__class__: continue
-                provider = task.app.task_manager.provider.name
-                jobids.setdefault(provider, [])
-                jobids[provider].append(task.jobid)
-            if all:
-                for jid, provider in queue.processes():
-                    jobids.setdefault(provider, [])
-                    jobids[provider].append(jid)
-            for provider, jid in jobids.items():
-                get_provider(provider).kill(*jid)
+                prov = task.app.task_manager.provider.name
+                jobids.setdefault(prov, set())
+                jobids[prov].add(task.jobid)
+            for jid, prov in queue.processes():
+                if provider is not None and provider.name != prov: continue
+                jobids.setdefault(prov, set())
+                jobids[prov].add(jid)
+            for prov, jid in jobids.items():
+                get_provider(prov).kill(*jid)
 
 
 def retry(queue, state=TaskState.KILLED, **kwargs):
