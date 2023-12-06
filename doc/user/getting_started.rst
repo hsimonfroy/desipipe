@@ -106,6 +106,11 @@ One can interact with ``queue`` from python directly, e.g.: :meth:`Queue.tasks` 
 :meth:`Queue.pause` to pause the queue, :meth:`Queue.resume` to resume the queue, etc.
 Usually though, one will use the command line: see the cheat list below.
 
+.. note::
+
+  To play with the above example, and in particular discover tips in case you want to rerun selected tasks only,
+  or the file manager of **desipipe**, see this `notebook <https://github.com/cosmodesi/desipipe/blob/main/nb/basic_examples.ipynb>`_.
+
 
 NERSC
 -----
@@ -187,7 +192,7 @@ Resume a queue
 
   desipipe resume -q my_queue   # pass --spawn to spawn a manager process that will distribute the tasks among workers
 
-This is the opposite of ``pause``. When resuming a queue, tasks will get processed again.
+This is the opposite of ``pause``. When resuming a queue, tasks can get processed again (if a manager process is running).
 
 Print tasks in queue
 ~~~~~~~~~~~~~~~~~~~~
@@ -214,7 +219,7 @@ Retry tasks
 
   desipipe retry -q my_queue --state KILLED
 
-Tasks for which state is 'KILLED' (and only those tasks) are changed to 'PENDING', i.e. they will be processed again.
+Tasks for which state is 'KILLED', and only those tasks, are changed to 'PENDING', i.e. they will be processed again.
 
 Kill tasks
 ~~~~~~~~~~

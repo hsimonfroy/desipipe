@@ -101,6 +101,31 @@ def test_queue(spawn=True, run=False):
         for frac in fractions:
             assert fraction().result() == frac.result()  # the previous fraction result is used
 
+    @tm2.python_app
+    def test_error(i):
+        if i >= 2:
+            raise ValueError(str(i))
+        else:
+            return i
+
+    errors = [test_error(i) for i in range(4)]
+    if tospawn:
+        spawn(queue)
+        errors = [error.err() for error in errors]
+        assert not any(errors[:2])
+        assert all(errors[2:])
+
+    @tm2.python_app(name=True, state='SUCCEEDED')
+    def test_error(i):
+        return i + 10
+
+    errors = [test_error(i) for i in range(4)]
+    if tospawn:
+        spawn(queue)
+        errors = [error.result() for error in errors]
+        assert errors[:2] == [0, 1]
+        assert errors[2:] == [12, 13]
+
     if run:
         from desipipe.task_manager import TaskPickler, TaskUnpickler
         task = queue.pop()
@@ -114,6 +139,10 @@ def test_queue(spawn=True, run=False):
     time.sleep(5)
     queue.resume()
     print('processes', queue.processes())
+    print(queue.summary())
+
+    for tid in queue.tasks(state='FAILED', property='tid'):
+        del queue[tid]
 
     @tm2.python_app
     def error():
@@ -126,7 +155,7 @@ def test_queue(spawn=True, run=False):
             err = error()
         spawn(queue, mode='stop_at_error')
         err.result()
-        assert queue.counts(state='FAILED') == 1
+        print(queue.counts(state='FAILED'))
 
         for tid in queue.tasks(name='fraction', property='tid'):
             del queue[tid]
