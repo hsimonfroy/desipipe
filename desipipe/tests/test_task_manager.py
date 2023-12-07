@@ -146,6 +146,7 @@ def test_queue(spawn=True, run=False):
 
     @tm2.python_app
     def error():
+        print('ERROR')
         raise ValueError
 
     if tospawn:
@@ -153,8 +154,9 @@ def test_queue(spawn=True, run=False):
         #print(queue.summary())
         for i in range(10):
             err = error()
-        spawn(queue, mode='stop_at_error')
+        spawn(queue, mode='stop_at_error no_out')
         err.result()
+        assert not err.out()
         print(queue.counts(state='FAILED'))
 
         for tid in queue.tasks(name='fraction', property='tid'):
@@ -243,7 +245,6 @@ if __name__ == '__main__':
     #test_serialization()
     #test_app()
     test_queue(spawn=True, run=False)
-    exit()
     test_cmdline()
     #test_file(spawn=True)
     #test_mpi()

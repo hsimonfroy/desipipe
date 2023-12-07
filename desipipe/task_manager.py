@@ -1613,7 +1613,7 @@ class TaskManager(BaseClass):
         return self.scheduler(*args, **kwargs)
 
 
-def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm=None, mpisplits=None):
+def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=None, mpisplits=None):
     """
     Do the actual work: pop tasks from the input queue, and run them.
 
@@ -1634,7 +1634,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     provider : str, default=None
         Name of provider, to get process ID. Defaults to the manager's provider.
 
-    mode : str, default=None
+    mode : str, default=''
         Processing mode.
         'stop_at_error' to stop as soon as a task is failed.
 
@@ -1696,10 +1696,12 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
     global t0, killed
     killed = False
     timestep = 10.
+    no_stream = 'no_stream' in mode
+    no_out = no_stream or ('no_out' in mode)
 
     def callback(out, err):
         global t0, killed
-        if killed: return
+        if killed or no_stream: return
         if (mpicomm is None or mpicomm.rank == 0) and time.time() - t0 > timestep:
             if (out, err) != (task.out, task.err):
                 task.out, task.err = out, err
@@ -1749,14 +1751,15 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode=None, mpicomm
         task.run(**kwargs)
         if mpicomm is not None: mpicomm.barrier()
         if mpicomm is None or mpicomm.rank == 0:
+            if no_out: task.out = ''
             try: queue.add(task, replace=True)
             except: pass
         itask += 1
-        if mode == 'stop_at_error' and task.state == TaskState.FAILED:
+        if 'stop_at_error' in mode and task.state == TaskState.FAILED:
             break
 
 
-def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=False):
+def spawn(queue, timeout=1e6, timestep=1., mode='', max_workers=None, spawn=False):
     """
     Distribute tasks to workers.
     If all queues are paused, the function terminates.
@@ -1772,7 +1775,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
     timestep : float, default=1.
         Period (in seconds) at which the queue is queried for new tasks.
 
-    mode : str, default=None
+    mode : str, default=''
         Processing mode.
         'stop_at_error' to stop as soon as a task is failed.
 
@@ -1805,7 +1808,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
                 queue.add_process(pid, provider='local')
             if queue.paused:
                 continue
-            if mode == 'stop_at_error' and queue.counts(state=TaskState.FAILED):
+            if 'stop_at_error' in mode and queue.counts(state=TaskState.FAILED):
                 continue
             if queue.counts(state=(TaskState.PENDING, TaskState.RUNNING)):
                 stop = False
@@ -1821,8 +1824,7 @@ def spawn(queue, timeout=1e6, timestep=1., mode=None, max_workers=None, spawn=Fa
                 ntasks = queue.counts(mid=manager.id, state=TaskState.PENDING)
                 # print(ntasks, queue.counts(mid=manager.id, state=TaskState.PENDING), queue.counts(mid=manager.id, state=TaskState.WAITING), stop, flush=True)
                 if ntasks:
-                    # print('desipipe work --queue {} --mid {}'.format(queue.filename, manager.id))
-                    manager.spawn('desipipe work --queue {} --mid {} --mode {}'.format(queue.filename, manager.id, mode), ntasks=ntasks)
+                    manager.spawn("desipipe work --queue {} --mid {} --mode {}".format(queue.filename, manager.id, mode), ntasks=ntasks)
                     for jobid in manager.provider.jobids():
                         if jobid is not None and (manager.provider.name, jobid) not in added_processes:  # just to limit queries
                             added_processes.add((manager.provider.name, jobid))
@@ -1996,10 +1998,10 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
         parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
-        parser.add_argument('--mode', type=str, required=False, default=None, help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
+        parser.add_argument('--mode', nargs='*', type=str, required=False, default=None, help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
         parser.add_argument('--mpisplits', type=int, required=False, default=None, help='Number of MPI splits')
         args = parser.parse_args(args=args)
-        return work(args.queue, mid=args.mid, tid=args.tid, name=args.name, mode=args.mode, mpisplits=args.mpisplits)
+        return work(args.queue, mid=args.mid, tid=args.tid, name=args.name, mode=' '.join(args.mode), mpisplits=args.mpisplits)
 
     if action == 'tasks':
 
