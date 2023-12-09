@@ -730,14 +730,10 @@ class Queue(BaseClass):
         query = 'INSERT OR REPLACE INTO processes (pid, provider) VALUES (?, ?)'
         pid = str(pid)
         provider = str(getattr(provider, 'name', provider))
-        try:
-            self._get_lock()
-            self._query([query, (pid, provider)])
-            self.db.commit()
-        except:
-            pass
-        finally:
-            self._release_lock()
+        self._get_lock()
+        self._query([query, (pid, provider)])
+        self.db.commit()
+        self._release_lock()
 
     def add(self, tasks, replace=False):
         """
@@ -1795,17 +1791,20 @@ def spawn(queue, timeout=1e6, timestep=1., mode='', max_workers=None, spawn=Fals
     while True:
         if (time.time() - t0) > timeout:
             break
-        if all(queue.paused for queue in queues) or stop:
+        if all(queue.paused for queue in queues):
             break
-        if nsteps == stop_after_nsteps:
+        if stop:
+            if nsteps > stop_after_nsteps:  # after stop_after_nsteps with stop, stop
+                break
+        else:
             nsteps = 0
-            stop = True
         nsteps += 1
+        stop = True
         for (queue, managers, added_processes) in zip(queues, qmanagers, qadded_processes):
             pid = os.getpid()
-            if ('local', pid) not in added_processes:
-                added_processes.add(('local', pid))
-                queue.add_process(pid, provider='local')
+            #if ('local', pid) not in added_processes:
+            #    added_processes.add(('local', pid))
+            queue.add_process(pid, provider='local')  # force checking .sqlite file exists
             if queue.paused:
                 continue
             if 'stop_at_error' in mode and queue.counts(state=TaskState.FAILED):
