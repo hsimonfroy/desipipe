@@ -796,7 +796,7 @@ class Queue(BaseClass):
             return futures[0]
         return futures
 
-    def _get_lock(self, timeout=20., timestep=1.):
+    def _get_lock(self, timeout=60., timestep=1.):
         # """Get lock on the data base."""
         t0 = time.time()
         while True:
