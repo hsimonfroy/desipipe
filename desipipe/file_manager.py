@@ -311,17 +311,21 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     def symlink(self, raise_error=True):
         """Create symlink."""
         try:
-            if not self.link:
-                raise ValueError('no link given for {}, try update(link=...)'.format(self))
-            symlink = self._resolve_path(self.link)
-            utils.mkdir(os.path.dirname(symlink))
-            return os.symlink(self.__fspath__(), symlink)
+            sympath = self.sympath
+            utils.mkdir(os.path.dirname(sympath))
+            return os.symlink(self.filepath, sympath)
         except Exception as exc:
             if raise_error: raise exc
 
     @property
     def filepath(self):
         return self.__fspath__()
+
+    @property
+    def sympath(self):
+        if not self.link:
+            raise ValueError('no link given for {}, try update(link=...)'.format(self))
+        return self._resolve_path(self.link)
 
     def __str__(self):
         return self.__fspath__()
