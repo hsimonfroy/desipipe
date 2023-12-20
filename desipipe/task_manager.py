@@ -637,9 +637,13 @@ class Queue(BaseClass):
             mpicomm.barrier()
 
         self.log_debug('Connection to queue {}'.format(self.filename))
-        self.db = sqlite3.Connection(self.filename, timeout=60)
+        self.timeout_query = 120.
+        self.timestep_query = 2.
+        self.timeout_lock = 120.
+        self.timestep_lock = 4.
+        self.db = sqlite3.Connection(self.filename, timeout=self.timeout_query)
 
-    def _query(self, query, timeout=120., timestep=1., many=False):
+    def _query(self, query, timeout=None, timestep=None, many=False):
         """
         Perform a database query, retrying if needed.
 
@@ -652,7 +656,7 @@ class Queue(BaseClass):
         timeout : float, default=120
             After this delay (in seconds) without success, raise sqlite3.OperationalError.
 
-        timestep : float, default=1
+        timestep : float, default=2
             Period (in seconds) at which the queue is queried.
 
         many : bool, default=False
@@ -664,6 +668,8 @@ class Queue(BaseClass):
         result : str
             Result of query.
         """
+        if timeout is None: timeout = self.timeout_query
+        if timestep is None: timestep = self.timestep_query
         t0, ntries = time.time(), 1
         if isinstance(query, str):
             query = (query,)
@@ -796,7 +802,9 @@ class Queue(BaseClass):
             return futures[0]
         return futures
 
-    def _get_lock(self, timeout=60., timestep=1.):
+    def _get_lock(self, timeout=None, timestep=None):
+        if timeout is None: timeout = self.timeout_lock
+        if timestep is None: timestep = self.timestep_lock
         # """Get lock on the data base."""
         t0 = time.time()
         while True:
@@ -1691,7 +1699,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
 
     global t0, killed
     killed = False
-    timestep = 10.
+    timestep = 15.  # timestep for streaming output
     no_stream = 'no_stream' in mode
     no_out = no_stream or ('no_out' in mode)
 
@@ -1747,6 +1755,10 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
         task.run(**kwargs)
         if mpicomm is not None: mpicomm.barrier()
         if mpicomm is None or mpicomm.rank == 0:
+            delta = time.time() - t0
+            if task.err and delta > 0:
+                time.sleep(delta * random.uniform(0.1, 1.))  # if the task fails immediately, avoid overloading the queue
+            time.sleep(0.5 * random.uniform(0.8, 1.2))
             if no_out: task.out = ''
             try: queue.add(task, replace=True)
             except: pass
