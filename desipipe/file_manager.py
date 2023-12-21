@@ -310,10 +310,13 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
 
     def symlink(self, raise_error=True):
         """Create symlink."""
+        filepath = self.filepath
         try:
+            if not os.path.exists(filepath):
+                raise FileNotFoundError('{} does not exist'.format(filepath))
             sympath = self.sympath
             utils.mkdir(os.path.dirname(sympath))
-            return os.symlink(self.filepath, sympath)
+            return os.symlink(filepath, sympath)
         except Exception as exc:
             if raise_error: raise exc
 
