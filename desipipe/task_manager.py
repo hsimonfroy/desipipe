@@ -2117,7 +2117,7 @@ def action_from_args(action='work', args=None):
     if action == 'spawn':
 
         parser.add_argument('--timeout', type=float, required=False, default=1e4, help='Stop after this time')
-        parser.add_argument('--mode', type=str, required=False, default=None, help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
+        parser.add_argument('--mode', type=str, required=False, default='', help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
         parser.add_argument('--max-workers', type=int, required=False, default=None, help='Maximum number of workers, overrides scheduler max_workers')
         parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process and exit this one')
         args = parser.parse_args(args=args)

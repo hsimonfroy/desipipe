@@ -316,6 +316,7 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
                 raise FileNotFoundError('{} does not exist'.format(filepath))
             sympath = self.sympath
             utils.mkdir(os.path.dirname(sympath))
+            if os.path.islink(sympath): os.remove(sympath)
             return os.symlink(filepath, sympath)
         except Exception as exc:
             if raise_error: raise exc
