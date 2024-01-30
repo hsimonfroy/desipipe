@@ -1700,8 +1700,8 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
     global t0, killed
     killed = False
     timestep = 15.  # timestep for streaming output
-    no_stream = 'no_stream' in mode
-    no_out = no_stream or ('no_out' in mode)
+    no_out = 'no_out' in mode
+    no_stream = no_out or ('no_stream' in mode)
 
     def callback(out, err):
         global t0, killed
