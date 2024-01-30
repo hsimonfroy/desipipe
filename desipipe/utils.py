@@ -182,7 +182,6 @@ class BaseDict(UserDict, BaseClass, metaclass=DictMetaClass):
     def clone(self, *args, **kwargs):
         new = self.copy()
         new.update(*args, **kwargs)
-        new.__init__()
         return new
 
 

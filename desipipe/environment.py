@@ -76,10 +76,14 @@ class BaseEnvironment(BaseDict, metaclass=RegisteredEnvironment):
         self.data = {}
         for name, value in self._defaults.items():
             self.setdefault(name, copy.copy(value))
-        self.command = _make_list(getattr(self, '_command', []), tp=str)
-        if command is not None:
-            self.command += _make_list(command, tp=str)
-        self.update(**(data or {}))
+        self.update((data or {}), command=command)
+    
+    def update(self, *args, **kwargs):
+        """Update."""
+        if 'command' in kwargs:
+            command = kwargs.pop('command')
+            self.command = _make_list(getattr(self, '_command', []), tp=str) + _make_list(command, tp=str)
+        super().update(*args, **kwargs)
 
     def to_dict(self, all=False):  # including command
         """
@@ -151,7 +155,7 @@ def change_environ(environ):
     """
     Temporarily set the process environment variables.
 
-    >>> with set_env(PLUGINS_DIR='test/plugins'):
+    >>> with change_environ(PLUGINS_DIR='test/plugins'):
     ...   "PLUGINS_DIR" in os.environ
     True
 
