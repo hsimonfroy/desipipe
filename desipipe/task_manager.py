@@ -1641,6 +1641,9 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
     mode : str, default=''
         Processing mode.
         'stop_at_error' to stop as soon as a task is failed.
+        'retry_at_timeout' to retry when time out.
+        'no_stream' to not stream stderr/stdout during the tasks (helps when many jobs in parallel).
+        'no_out' to not stream stderr/stdout and not save stdout.
 
     mpicomm : MPI communicator, default=mpi.COMM_WORLD
         The MPI communicator.
@@ -1731,7 +1734,10 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
             if task is not None:  # can be None if no task to pop
                 tm = task.app.task_manager
                 _stream_out_err = tm.provider.name != 'local'
-                killed_at_timeout = getattr(tm.provider, 'killed_at_timeout', None)
+                if 'retry_at_timeout' in mode:
+                    killed_at_timeout = False
+                else:
+                    killed_at_timeout = getattr(tm.provider, 'killed_at_timeout', None)
                 ntasks[tm.id] = ntasks.get(tm.id, 0) + 1
                 stop_after = getattr(tm.provider, 'stop_after', None)
                 if stop_after is not None and ntasks[tm.id] > stop_after:
@@ -1786,6 +1792,9 @@ def spawn(queue, timeout=1e6, timestep=1., mode='', max_workers=None, spawn=Fals
     mode : str, default=''
         Processing mode.
         'stop_at_error' to stop as soon as a task is failed.
+        'retry_at_timeout' to retry when time out.
+        'no_stream' to not stream stderr/stdout during the tasks (helps when many jobs in parallel).
+        'no_out' to not stream stderr/stdout and not save stdout.
 
     spawn : bool, default=False
         If ``True``, spawn a new manager process and exit this one.
@@ -2117,7 +2126,7 @@ def action_from_args(action='work', args=None):
     if action == 'spawn':
 
         parser.add_argument('--timeout', type=float, required=False, default=1e4, help='Stop after this time')
-        parser.add_argument('--mode', type=str, required=False, default='', help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
+        parser.add_argument('--mode', type=str, required=False, default='', help='Processing mode; "stop_at_error" to stop as soon as a task is failed; "retry_at_timeout" to retry when time out; "no_stream" to not stream stderr/stdout during the tasks (helps when many jobs in parallel. "no_out" to not stream stderr/stdout and not save stdout.')
         parser.add_argument('--max-workers', type=int, required=False, default=None, help='Maximum number of workers, overrides scheduler max_workers')
         parser.add_argument('--spawn', action='store_true', help='Spawn a new manager process and exit this one')
         args = parser.parse_args(args=args)
