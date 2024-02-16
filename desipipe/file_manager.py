@@ -295,9 +295,11 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         utils.mkdir(dirname)
         if save_attrs is not None:
             with tempfile.TemporaryDirectory(dir=dirname) as tmp_dir:
+                shutil.copystat(dirname, tmp_dir)  # set same permissions as dirname, which are then copied by shutil.copytree below
                 new_dir = save_attrs(tmp_dir) or dirname
                 shutil.copytree(tmp_dir, new_dir, dirs_exist_ok=True)
         with tempfile.TemporaryDirectory(dir=dirname) as tmp_dir:
+            shutil.copystat(dirname, tmp_dir)  # set same permissions as dirname, which are then copied by shutil.copytree below
             path = os.path.join(tmp_dir, os.path.basename(filepath))
             toret = get_filetype(filetype=self.filetype, path=path).save(*args, **kwargs)
             self.log_info('Moving output to {}'.format(filepath))
