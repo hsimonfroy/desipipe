@@ -1617,7 +1617,7 @@ class TaskManager(BaseClass):
         return self.scheduler(*args, **kwargs)
 
 
-def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=None, mpisplits=None):
+def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=None, mpisplits=None, timestep=120.):
     """
     Do the actual work: pop tasks from the input queue, and run them.
 
@@ -1644,6 +1644,9 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
         'retry_at_timeout' to retry when time out.
         'no_stream' to not stream stderr/stdout during the tasks (helps when many jobs in parallel).
         'no_out' to not stream stderr/stdout and not save stdout.
+
+    timestep : float, default=120
+        Time step for streaming output.
 
     mpicomm : MPI communicator, default=mpi.COMM_WORLD
         The MPI communicator.
@@ -1702,7 +1705,6 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
 
     global t0, killed
     killed = False
-    timestep = 15.  # timestep for streaming output
     no_out = 'no_out' in mode
     no_stream = no_out or ('no_stream' in mode)
 
