@@ -94,7 +94,7 @@ while ``average`` tasks will be 'WAITING' for the former to complete. ``echo`` a
 Running the script above will write a :class:`desipipe.Queue` on disk, with name 'test', in the directory ``_tests``
 (by default, it is ``${HOME}/.desipipe/queues/${USERNAME}/``).
 
-Now, we can spawn a manager process that will run the above tasks, following the specifications of the task managers.
+Now, we can spawn a manager process that will run the above tasks (in PENDING state), following the specifications of the task managers.
 
 
 .. code-block:: python
@@ -174,7 +174,7 @@ is the equivalent of the Python code:
   spawn(queue, spawn=True)
 
 This command is the one to "get the work job done".
-Specifically, it spawns a manager process that distributes the tasks among workers.
+Specifically, it spawns a manager process that distributes the tasks, in PENDING state, among workers.
 
 Pause a queue
 ~~~~~~~~~~~~~
@@ -192,7 +192,7 @@ Resume a queue
 
   desipipe resume -q my_queue   # pass --spawn to spawn a manager process that will distribute the tasks among workers
 
-This is the opposite of ``pause``. When resuming a queue, tasks can get processed again (if a manager process is running).
+This is the opposite of ``pause``. When resuming a queue, PENDING tasks can get processed again (if a manager process is running).
 
 Print tasks in queue
 ~~~~~~~~~~~~~~~~~~~~
