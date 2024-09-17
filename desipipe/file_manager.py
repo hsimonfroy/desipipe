@@ -522,7 +522,6 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                 return None
         return toret
 
-
     def get(self, *args, raise_error=True, **kwargs):
         """
         Return the :class:`BaseFile` instance that matches input arguments, see :meth:`select`.

@@ -135,9 +135,39 @@ class CorrelationFunctionFile(BaseFile):
         return corr.save(self.path)
 
 
+class ObservableCovarianceFile(BaseFile):
+
+    """Covariance file."""
+    name = 'covariance'
+
+    def load(self):
+        """Load covariance."""
+        from desilike.observables import ObservableCovariance
+        return ObservableCovariance.load(self.path)
+
+    def save(self, covariance):
+        """Save covariance."""
+        return covariance.save(self.path)
+
+
+class ObservableArrayFile(BaseFile):
+
+    """Observable array file."""
+    name = 'observable'
+
+    def load(self):
+        """Load observable."""
+        from desilike.observables import ObservableArray
+        return ObservableArray.load(self.path)
+
+    def save(self, observable):
+        """Save observable."""
+        return observable.save(self.path)
+
+
 class BaseMatrixFile(BaseFile):
 
-    """Power spectrum file."""
+    """Power spectrum window matrix file."""
     name = 'wmatrix'
 
     def load(self, mode='poles'):
