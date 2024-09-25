@@ -46,7 +46,7 @@ def test_file_manager():
     fn = '_tests/test_file_manager2.yaml'
     fm.save(fn)
     fm = FileManager(database=fn, environ=dict(DESIPIPEENVDIR='.'))
-    for fn in fm.select(filetype='catalog', id=['added_file_2', 'added_file_3']):
+    for fn in fm.select(filetype='catalog', id=['added_file_2', 'added_file_3']).iter(intersection=True):
         assert 'my_option_and_custom_file_entry' in fn.get(id='added_file_2').filepath
         assert 'my_option_2_and_custom_file_entry' in fn.get(id='added_file_3').filepath
     print(fm.exists())

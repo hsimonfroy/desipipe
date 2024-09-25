@@ -1112,7 +1112,7 @@ class FileManager(FileEntryCollection):
 
         return common_options([entry.options for entry in self.data], intersection=True)
 
-    def iter_options(self, include=None, exclude=None, intersection=True):
+    def iter_options(self, include=None, exclude=None, intersection=False):
         """
         Iterate over options that are common to all file entries (:attr:`options`).
 
@@ -1152,7 +1152,7 @@ class FileManager(FileEntryCollection):
             return common
         return list(iter_options(common_options([entry.options for entry in self.data], intersection=True), include=include, exclude=exclude))
 
-    def iter(self, include=None, exclude=None, get=None, intersection=True):
+    def iter(self, include=None, exclude=None, get=None, intersection=False):
         """
         Iterate over options that are common to all file entries (:attr:`options`),
         and return the list of the (selected) :class:`FileManager` instances.
