@@ -303,7 +303,12 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
             path = os.path.join(tmp_dir, os.path.basename(filepath))
             toret = get_filetype(filetype=self.filetype, path=path).save(*args, **kwargs)
             self.log_info('Moving output to {}'.format(filepath))
-            shutil.copytree(tmp_dir, dirname, dirs_exist_ok=True)
+            # the following breaks down shutil.copy2(path, filepath) to work around non-critical failures
+            shutil.copyfile(path, filepath) # most important step, should work as long as filepath is writable to the current user
+            try:
+                shutil.copystat(path, filepath) # copy metadata, less critical step, can fail if filepath has a different owner
+            except Exception as e:
+                self.log_info('WARNING: failed to copy metadata from {0} to {1}: {2}'.format(path, filepath, e)) # should rewrite into a proper warning message if that is implemented
             return toret
 
     def exists(self):
