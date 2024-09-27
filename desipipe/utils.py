@@ -35,8 +35,9 @@ def mkdir(dirname, **kwargs):
 def _copytree(entries, src, dst, symlinks, ignore, copy_function,
               ignore_dangling_symlinks, dirs_exist_ok=False, dirs_copystat=True):
     """
-    Slight modification of shutil._copytree
-    Added copystat flag allowing to avoid running shutil.copystat on directories.
+    Slight modification of `shutil._copytree`.
+    Added `dirs_copystat` flag: if false, `shutil.copystat` is not applied to directories.
+    See `copytree` for more details.
     """
     if ignore is not None:
         ignored_names = ignore(os.fspath(src), [x.name for x in entries])
@@ -107,8 +108,12 @@ def _copytree(entries, src, dst, symlinks, ignore, copy_function,
 def copytree(src, dst, symlinks=False, ignore=None, copy_function=shutil.copy2,
              ignore_dangling_symlinks=False, dirs_exist_ok=False, dirs_copystat=True):
     """
-    Slight modification of shutil.copytree.
-    Added dirs_copystat flag allowing to avoid running shutil.copystat on directories.
+    Slight modification of `shutil.copytree`.
+    Added `dirs_copystat` flag: if false, `shutil.copystat` is not applied to directories.
+    Motivation: `shutil.copystat` can fail if the owner of the destination directory or file
+    is different from the current user. `shutil.copy2` involves `shutil.copystat` as well.
+    Thus to avoid this operation completely, use `copy_function=shutil.copyfile`
+    and `dirs_copystat=False`.
 
     Recursively copy a directory tree and return the destination directory.
 
