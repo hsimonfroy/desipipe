@@ -1775,7 +1775,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
             break
 
 
-def spawn(queue, timeout=1e6, timestep=3., mode='', max_workers=None, spawn=False):
+def spawn(queue, timeout=3600 * 24, timestep=3., mode='', max_workers=None, spawn=False):
     """
     Distribute tasks to workers.
     If all queues are paused, the function terminates.
@@ -1785,7 +1785,7 @@ def spawn(queue, timeout=1e6, timestep=3., mode='', max_workers=None, spawn=Fals
     queue : Queue, list
         Queue or list of queues to process.
 
-    timeout : float, default=1e6
+    timeout : float, default=3600 * 24
         Time out after this delay (in seconds).
 
     timestep : float, default=3.
@@ -2127,7 +2127,7 @@ def action_from_args(action='work', args=None):
 
     if action == 'spawn':
 
-        parser.add_argument('--timeout', type=float, required=False, default=1e6, help='Stop after this time')
+        parser.add_argument('--timeout', type=float, required=False, default=3600 * 24, help='Stop after this time')
         parser.add_argument('--timestep', type=float, required=False, default=3., help='Period (in seconds) at which the queue is queried for new tasks')
         parser.add_argument('--mode', type=str, required=False, default='', help='Processing mode; "stop_at_error" to stop as soon as a task is failed; "retry_at_timeout" to retry when time out; "no_stream" to not stream stderr/stdout during the tasks (helps when many jobs in parallel. "no_out" to not stream stderr/stdout and not save stdout.')
         parser.add_argument('--max-workers', type=int, required=False, default=None, help='Maximum number of workers, overrides scheduler max_workers')
