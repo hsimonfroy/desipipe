@@ -295,15 +295,19 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         utils.mkdir(dirname)
         if save_attrs is not None:
             with tempfile.TemporaryDirectory(dir=dirname) as tmp_dir:
-                shutil.copystat(dirname, tmp_dir)  # set same permissions as dirname, which are then copied by shutil.copytree below
+                shutil.copystat(dirname, tmp_dir)  # set same permissions as dirname, which are then copied by copytree below
                 new_dir = save_attrs(tmp_dir) or dirname
-                shutil.copytree(tmp_dir, new_dir, dirs_exist_ok=True)
+                utils.copytree(tmp_dir, new_dir, dirs_exist_ok=True, copy_function=shutil.copyfile, dirs_copystat=False) # copy directory and file contents without trying to change permissions via shutil.copystat
+                try: utils.copytree(tmp_dir, new_dir, dirs_exist_ok=True, copy_function=shutil.copystat, dirs_copystat=True) # attempt to copy directory and file metadata with shutil.copystat; this can fail if the owner of dirname or some files in it is different from the current user
+                except Exception as e: self.log_warning('Failed to copy metadata recursively from {0} to {1}: {2}'.format(tmp_dir, new_dir, e)) # this failure is not critical, report as warning and move on
         with tempfile.TemporaryDirectory(dir=dirname) as tmp_dir:
-            shutil.copystat(dirname, tmp_dir)  # set same permissions as dirname, which are then copied by shutil.copytree below
+            shutil.copystat(dirname, tmp_dir)  # set same permissions as dirname, which are then copied by copytree below
             path = os.path.join(tmp_dir, os.path.basename(filepath))
             toret = get_filetype(filetype=self.filetype, path=path).save(*args, **kwargs)
             self.log_info('Moving output to {}'.format(filepath))
-            shutil.copytree(tmp_dir, dirname, dirs_exist_ok=True)
+            utils.copytree(tmp_dir, dirname, dirs_exist_ok=True, copy_function=shutil.copyfile, dirs_copystat=False) # copy directory and file contents without trying to change permissions via shutil.copystat
+            try: utils.copytree(tmp_dir, dirname, dirs_exist_ok=True, copy_function=shutil.copystat, dirs_copystat=True) # attempt to copy directory and file metadata with shutil.copystat; this can fail if the owner of dirname or some files in it is different from the current user
+            except Exception as e: self.log_warning('Failed to copy metadata recursively from {0} to {1}: {2}'.format(tmp_dir, dirname, e)) # this failure is not critical, report as warning and move on
             return toret
 
     def exists(self):
