@@ -741,7 +741,7 @@ class Queue(BaseClass):
         self.db.commit()
         self._release_lock()
 
-    def add(self, tasks, replace=False):
+    def add(self, tasks, replace=False, lock=True):
         """
         Add input task(s) to the queue.
 
@@ -755,6 +755,9 @@ class Queue(BaseClass):
             If ``False``, an error is raised if input tasks (as identified by their IDs) are already in the queue.
             If ``None``, do not add task if already in queue, but update task manager if task state is 'PENDING' or 'WAITING'.
 
+        lock : bool, default=True
+            Ask for lock.
+
         Returns
         -------
         futures : list
@@ -764,7 +767,7 @@ class Queue(BaseClass):
         if isscalar:
             tasks = [tasks]
         ids, requires, managers, states, tasks_serialized, jobids, t0s, futures = [], [], [], [], [], [], [], []
-        self._get_lock()
+        if lock: self._get_lock()
         for task in tasks:
             futures.append(Future(queue=self, tid=task.id))
             manager = task.app.task_manager
@@ -792,7 +795,6 @@ class Queue(BaseClass):
         for manager in managers:
             self._add_manager(manager)
         self.db.commit()
-        self._release_lock()
         for tid, state in zip(ids, states):
             if state == TaskState.WAITING:
                 self._update_waiting_task_state(tid=tid)
@@ -1714,7 +1716,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
         if (mpicomm is None or mpicomm.rank == 0) and time.time() - t0 > timestep:
             if (out, err) != (task.out, task.err):
                 task.out, task.err = out, err
-                try: queue.add(task, replace=True)
+                try: queue.add(task, replace=True, lock=False)
                 except: pass
             t0 = time.time()
 
@@ -1766,7 +1768,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
             delta = time.time() - t0
             if task.err and delta > 0:
                 time.sleep(delta * random.uniform(0.1, 1.))  # if the task fails immediately, avoid overloading the queue
-            time.sleep(0.5 * random.uniform(0.8, 1.2))
+            #time.sleep(0.5 * random.uniform(0.8, 1.2))
             if no_out: task.out = ''
             try: queue.add(task, replace=True)
             except: pass

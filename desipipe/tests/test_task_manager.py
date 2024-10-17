@@ -87,7 +87,7 @@ def test_queue(spawn=True, run=False):
     avg2 = average2(fractions)
     assert average3(fractions) is None
     if tospawn:
-        spawn(queue)
+        spawn(queue, timestep=2)
         print(queue.summary())
         print(ech.out())
         assert avg2.result() == avg.result()
@@ -110,7 +110,7 @@ def test_queue(spawn=True, run=False):
 
     errors = [test_error(i) for i in range(4)]
     if tospawn:
-        spawn(queue)
+        spawn(queue, timestep=2)
         errors = [error.err() for error in errors]
         assert not any(errors[:2])
         assert all(errors[2:])

@@ -109,7 +109,7 @@ Usually though, one will use the command line: see the cheat list below.
 .. note::
 
   To play with the above example, and in particular discover tips in case you want to rerun selected tasks only,
-  or the file manager of **desipipe**, see this `notebook <https://github.com/cosmodesi/desipipe/blob/main/nb/basic_examples.ipynb>`_.
+  see this `notebook <https://github.com/cosmodesi/desipipe/blob/main/nb/task_manager_examples.ipynb>`_.
 
 
 NERSC

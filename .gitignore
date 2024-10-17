@@ -13,7 +13,7 @@ doc/_build/
 **/build
 **/.ipynb_checkpoints
 **/bak/
-**/_tests
+**/_tests*
 **/_catalog
 **/_plots
 **/_results

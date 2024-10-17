@@ -60,10 +60,12 @@ def test_file_manager():
                    id='catalog_data_y1',
                    filetype='catalog',
                    path='tmp.fits',
-                   options={'cut': {None: '', ('rp', 2.5): 'rpcut2.5', ('theta', 0.06): 'thetacut0.06'}}))
+                   options={'cut': {None: '', ('rp', 2.5): 'rpcut2.5', ('theta', 0.06): 'thetacut0.06'}, 'region': ['NGC']}))
     assert fm.select(cut=[None])
     assert fm.select(cut=[('theta', 0.06)])
     assert fm.select(cut=('theta', 0.06))
+    fi = fm.get(cut=[None])
+    print(fi, fi.clone(path='tmp_{region}.fits', options=fi.options | {'region': 'S'}))
 
 
 if __name__ == '__main__':
