@@ -4,6 +4,7 @@ import copy
 import random
 import subprocess
 import functools
+from shlex import split
 
 from .utils import BaseClass
 from . import utils
@@ -195,8 +196,7 @@ class LocalProvider(BaseProvider):
             tmp = cmd
             if self.mpiprocs_per_worker > 1:
                 tmp = self.mpiexec.format(mpiprocs=self.mpiprocs_per_worker, cmd=tmp)
-            # self.processes.append(subprocess.Popen(tmp.split(' ')))
-            self.processes.append(subprocess.Popen(tmp.split(' '), start_new_session=True, env=environ))
+            self.processes.append(subprocess.Popen(split(tmp), start_new_session=True, env=environ))
             #time.sleep(random.uniform(0.8, 1.2))
 
     def clear(self):
@@ -318,7 +318,7 @@ class SlurmProvider(BaseProvider):
             self.sqs = ['squeue', '-u', user]
         else:
             if isinstance(self.sqs, str):
-                self.sqs = self.sqs.split(' ')
+                self.sqs = split(self.sqs)
             self.sqs = list(self.sqs)
         return self.sqs
 
