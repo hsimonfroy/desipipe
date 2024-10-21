@@ -68,6 +68,7 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
         """
         for name, value in self._defaults.items():
             setattr(self, name, copy.copy(value))
+
         self.update(**{'environ': environ, **kwargs})
         self.processes = []
 
@@ -171,7 +172,6 @@ class LocalProvider(BaseProvider):
     """
     name = 'local'
     _defaults = {**BaseProvider._defaults, 'mpiprocs_per_worker': 1, 'mpiexec': 'mpiexec -np {mpiprocs:d} {cmd}'}
-
 
     @classmethod
     def jobid(cls):
@@ -299,12 +299,28 @@ class SlurmProvider(BaseProvider):
         Template to run a command with MPI.
     """
     name = 'slurm'
-    _defaults = {**BaseProvider._defaults, 'account': 'desi', 'constraint': 'cpu', 'qos': 'regular', 'time': '01:00:00', 'nodes_per_worker': 1., 'mpiprocs_per_worker': 1, 'output': '/dev/null', 'error': '/dev/null', 'mpiexec': 'srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', 'signal': 'SIGTERM@30', 'killed_at_timeout': None, 'kwargs': {}}
+    _defaults = {**BaseProvider._defaults, 'sqs': None, 'qos': 'regular', 'time': '01:00:00', 'nodes_per_worker': 1., 'mpiprocs_per_worker': 1, 'output': '/dev/null', 'error': '/dev/null', 'mpiexec': 'srun --unbuffered -N {nodes:d} -n {mpiprocs:d} {cmd}', 'signal': 'SIGTERM@30', 'killed_at_timeout': None, 'kwargs': {}}
 
     def update(self, **kwargs):
         """Update provider with input attributes."""
         super(SlurmProvider, self).update(**kwargs)
         self.time = '{:d}-{:d}:{:d}:{:d}'.format(*decode_slurm_time(self.time))  # days-hours:minutes:seconds
+        self.get_sqs()
+
+    def get_sqs(self):
+        # Backward-compatibility
+        self.sqs = getattr(self, 'sqs', None)
+        if self.sqs is None:
+            user = self.environ.get('USER', '')
+            if not user:
+                import getpass
+                user = getpass.getuser()
+            self.sqs = ['squeue', '-u', user]
+        else:
+            if isinstance(self.sqs, str):
+                self.sqs = self.sqs.split(' ')
+            self.sqs = list(self.sqs)
+        return self.sqs
 
     @classmethod
     def jobid(cls):
@@ -356,7 +372,7 @@ class SlurmProvider(BaseProvider):
             if state not in allowed_state:
                 raise ValueError('state must be one of {}, found {}'.format(allowed_state, state))
         try:
-            sqs = subprocess.run(['sqs'], check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')
+            sqs = subprocess.run(self.get_sqs(), check=True, stdout=subprocess.PIPE, text=True).stdout.split('\n')
         except subprocess.CalledProcessError:
             jobids = getattr(self, '_jobids', [])
         else:
@@ -418,7 +434,7 @@ class NERSCProvider(SlurmProvider):
         Beyond this number of allocated nodes, cost increases linearly.
     """
     name = 'nersc'
-    _defaults = {**SlurmProvider._defaults, 'threshold_nodes': 1}  # threshold_nodes = 1: favors 1-node jobs
+    _defaults = {**SlurmProvider._defaults, 'account': 'desi', 'constraint': 'cpu', 'threshold_nodes': 1}  # threshold_nodes = 1: favors 1-node jobs
 
     def __init__(self, *args, **kwargs):
         super(NERSCProvider, self).__init__(*args, **kwargs)
