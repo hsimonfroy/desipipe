@@ -68,6 +68,40 @@ def test_file_manager():
     print(fi, fi.clone(path='tmp_{region}.fits', options=fi.options | {'region': 'S'}))
 
 
+def test_error():
+    fm = FileManager()
+    fm.append(dict(description='Y1 data catalogs',
+                   id='catalog_data_y1',
+                   filetype='catalog',
+                   path='tmp.fits',
+                   options={'cut': {None: '', ('rp', 2.5): 'rpcut2.5', ('theta', 0.06): 'thetacut0.06'}, 'region': ['NGC']}))
+    try:
+        fm.select(cut='rpcut5', empty_error=True)
+    except ValueError as exc:
+        print(exc)
+
+    try:
+        fm.get(cut='rpcut5', raise_error=True)
+    except ValueError as exc:
+        print(exc)
+
+    try:
+        fm.get(acut='rpcut5', raise_error=True)
+    except ValueError as exc:
+        print(exc)
+
+    try:
+        fm.get(filetype='cata', raise_error=True)
+    except ValueError as exc:
+        print(exc)
+
+    try:
+        fm.get(id='cata', raise_error=True)
+    except ValueError as exc:
+        print(exc)
+
+
 if __name__ == '__main__':
 
     test_file_manager()
+    test_error()
