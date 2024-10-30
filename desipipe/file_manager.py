@@ -88,7 +88,7 @@ class BaseMutableClass(BaseClass):
             if name in self._defaults:
                 setattr(self, name, type(self._defaults[name])(value))
             else:
-                raise ValueError('Unknown argument {}; supports {}'.format(name, list(self._defaults)))
+                raise ValueError('unknown argument {}; supports {}'.format(name, list(self._defaults)))
 
     def deepcopy(self):
         """Return a deep copy."""
@@ -479,7 +479,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
             self.foptions.setdefault(name, values)
         self.foptions = {name: _make_list_options(value) for name, value in self.foptions.items() if name in self.options}
 
-    def select(self, ignore=False, check_exists=False, raise_error=True, **kwargs):
+    def select(self, ignore=False, check_exists=False, raise_error=True, _return_matching_score=False, **kwargs):
         """
         Restrict to input options, e.g.
 
@@ -499,31 +499,38 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         raise_error : bool, default=True
             If ``False`` and an error is raised, catch it and return ``None``.
         """
-        def eq(test, ref):
-            if type(test) is not type(ref):
-                if hasattr(test, '__iter__') and hasattr(ref, '__iter__'):
-                    return test == type(test)(ref)
-            return test == ref
-
         options, foptions = self.options.copy(), self.foptions.copy()
+        matching_score, matching_total = 0, 0
+        toret = None
+        return_now = False
         if not ignore in [False, True]: ignore = _make_list(ignore)
         for name, values in kwargs.items():
             if isinstance(ignore, list) and name in ignore: continue
             if name in options:
-                options[name], indices = in_options(values, options[name], return_index=True)
+                options[name], indices = in_options(values, self.options[name], return_index=True)
+                if raise_error and not options[name]:
+                    raise ValueError('option {} received {} but can only take values {}'.format(name, values, self.options[name]))
+                matching_total += 1
+                matching_score += bool(len(options[name]))
                 if indices is Ellipsis:  # Ellipsis
                     foptions[name] = options[name]
                 else:
                     foptions[name] = [foptions[name][index] for index in indices]
             elif not ignore:
-                if raise_error: raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
-                return None
-        toret = self.clone(options=options, foptions=foptions)
-        if check_exists:
-            exists = toret.exists()
-            if exists[False]:
-                if raise_error: raise FileNotFoundError('file {} not found.'.format(exists[False]))
-                return None
+                matching_score = None
+                if raise_error: raise ValueError('unknown option {}, select from {}'.format(name, self.options))
+                return_now = True
+                break
+        if not return_now:
+            matching_score = matching_score / max(matching_total, 1)  # higher it is, better the match is
+            toret = self.clone(options=options, foptions=foptions)
+            if check_exists:
+                exists = toret.exists()
+                if exists[False]:
+                    if raise_error: raise FileNotFoundError('file {} not found.'.format(exists[False]))
+                    toret = None
+        if _return_matching_score:
+            return toret, matching_score
         return toret
 
     def get(self, *args, raise_error=True, **kwargs):
@@ -775,7 +782,7 @@ class FileEntryCollection(BaseClass):
             for dd in self.parser(string, **kwargs):
                 self.append(dd)
 
-    def index(self, id=None, filetype=None, keywords=None, return_entry=False, **kwargs):
+    def index(self, id=None, filetype=None, keywords=None, return_entry=False, empty_error=False, ignore=False, **kwargs):
         """
         Return indices for input identifiers, keywords, or options, e.g.
 
@@ -819,28 +826,58 @@ class FileEntryCollection(BaseClass):
             keywords = _make_list_options(keywords)
             keywords = [keyword.lower().split() for keyword in keywords]
         indices, entries = [], []
+        not_id, not_filetype, not_keywords, scores = True, True, True, []
         for ientry, entry in enumerate(self.data):
             if id is not None and entry.id.lower() not in id:
                 continue
+            not_id = False
             if filetype is not None and entry.filetype.lower() not in filetype:
                 continue
+            not_filetype = False
             if keywords is not None:
                 description = entry.description.lower()
                 if not any(all(kw in description for kw in keyword) for keyword in keywords):
                     continue
-            try:
-                entry = entry.select(**kwargs)
-            except ValueError:
-                continue
-            if entry is None or not entry:
+            not_keywords = False
+            sentry, score = entry.select(ignore=ignore, check_exists=False, _return_matching_score=True, raise_error=False, **kwargs)
+            if sentry is None or not sentry:
+                scores.append((entry, score))
                 continue
             indices.append(ientry)
-            entries.append(entry)
+            entries.append(sentry)
+        if not indices and empty_error:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                try:
+                    from fuzzywuzzy import process
+                except ImportError:
+                    pass
+                else:
+                    limit = 2
+                    if id is not None and not_id:
+                        raise ValueError('id {} not found, maybe you meant {}?'.format(id, [[tmp[0] for tmp in process.extract(_, [entry.id.lower() for entry in self.data], limit=limit)] for _ in id]))
+                    if filetype is not None and not_filetype:
+                        raise ValueError('filetype {} not found, maybe you meant {}?'.format(filetype, [[tmp[0] for tmp in process.extract(_, [entry.filetype.lower() for entry in self.data], limit=limit)] for _ in filetype]))
+                    if keywords is not None and not_keywords:
+                        raise ValueError('keywords {} not found, maybe you meant {}?'.format(keywords, [[tmp[0] for tmp in process.extract(_, [entry.description.lower() for entry in self.data], limit=limit)] for _ in keywords]))
+            if not len(self):
+                raise ValueError('{} is empty'.format(self.__class__.__name__))
+            nomatch = [score for score in scores if score[1] is None]
+            scores = [score for score in scores if score[1] is not None]
+            if not any(scores):
+                raise ValueError('options {} not found in any entry. Note that you can pass ignore=True to ignore input input options that cannot be found in any file entry'.format(kwargs))
+            scores = sorted(scores, key=lambda x: x[1], reverse=True)
+            error = 'option values {} not found, best matching entries are {}'.format(kwargs, [score[0] for score in scores[:limit]])
+            if nomatch:
+                error += '. Note that you can pass ignore=True to ignore input input options that cannot be found in a file entry.'
+            raise ValueError(error)
+
         if return_entry:
             return indices, entries
         return indices
 
-    def select(self, id=None, filetype=None, keywords=None, **kwargs):
+    def select(self, id=None, filetype=None, keywords=None, empty_error=False, **kwargs):
         """
         Restrict to input identifiers, keywords, or options, e.g.
 
@@ -879,7 +916,7 @@ class FileEntryCollection(BaseClass):
         new : FileEntryCollection
             Selected data base.
         """
-        data = self.index(id=id, filetype=filetype, keywords=keywords, return_entry=True, **kwargs)[1]
+        data = self.index(id=id, filetype=filetype, keywords=keywords, return_entry=True, empty_error=empty_error, **kwargs)[1]
         return self.clone(data=data)
 
     def get(self, *args, check_exists=False, raise_error=True, **kwargs):
@@ -902,13 +939,12 @@ class FileEntryCollection(BaseClass):
         -------
         file : BaseFile
         """
-        new = self.select(*args, **kwargs)
+        new = self.select(*args, empty_error=raise_error, **kwargs)
         if len(new.data) == 1:
             return new.data[0].get(check_exists=check_exists, raise_error=raise_error)
         try:
             if len(new.data) > 1:
                 raise ValueError('"get" is not applicable as there are {} entries:\n{}'.format(len(new.data), '\n'.join([repr(entry) for entry in new.data])))
-            raise ValueError('"get" is not applicable as there are no matching entries')
         except ValueError:
             if raise_error: raise
             return None
@@ -1000,12 +1036,12 @@ class FileEntryCollection(BaseClass):
             for entry in self.data:
                 entry.environ = environ
         if kwargs:
-            raise ValueError('Unrecognized arguments {}'.format(kwargs))
+            raise ValueError('unrecognized arguments {}'.format(kwargs))
 
-    def clone(self, *args, **kwargs):
+    def clone(self, **kwargs):
         """Return an updated copy."""
         new = self.copy()
-        new.update(*args, **kwargs)
+        new.update(**kwargs)
         return new
 
     def __add__(self, other):
@@ -1063,7 +1099,7 @@ class FileEntryCollection(BaseClass):
                 toret.append('=' * len(toret[-1]))
                 toret += filepaths
             return '\n'.join(toret)
-        raise ValueError('Unknown return_type {}'.format(return_type))
+        raise ValueError('unknown return_type {}'.format(return_type))
 
 
 def common_options(list_options, intersection=True):
