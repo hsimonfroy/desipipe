@@ -450,3 +450,30 @@ class NERSCProvider(SlurmProvider):
         if nodes < self.threshold_nodes:
             return 0
         return nodes - self.threshold_nodes
+
+    def __call__(self, cmd, workers=1):
+        """
+        Submit input command ``cmd`` on ``workers`` workers.
+        In case we stack multiple parallel single-process jobs, we use GNU parallel.
+        Indeed, in case of bash_app, this avoids spawning a subprocess from an MPI application, which is undefined behavior.
+        """
+        if self.nodes_per_worker <= 0.:
+            raise ValueError('Cannot set nodes_per_worker <= 0.')
+        nodes = self.nodes(workers=workers)
+        if int(self.nodes_per_worker) != self.nodes_per_worker:  # stack jobs
+            if self.mpiprocs_per_worker == 1:
+                cmd = ' ; '.join(['module load parallel', 'seq {:d} | parallel -n0 {}'.format(workers, cmd)])
+            else:
+                cmd = self.mpiexec.format(nodes=nodes, mpiprocs=self.mpiprocs_per_worker * workers, cmd=cmd) + ' --mpisplits {:d}'.format(workers)
+        else:
+            cmd = [self.mpiexec.format(nodes=int(self.nodes_per_worker), mpiprocs=self.mpiprocs_per_worker, cmd=cmd)] * workers
+            cmd = ' & '.join(cmd)
+            if workers: cmd += ' & wait'
+        cmd = self.environ.to_script(sep=' ; ') + ' ; ' + cmd
+        kwargs = []
+        for name, value in self.kwargs.items(): kwargs += ['--{}'.format(name), str(value)]
+        # -- parsable to get jobid (optionally, cluster name)
+        # -- wrap to pass the job
+        cmd = ['sbatch', '--output', self.output, '--error', self.error, '--account', str(self.account), '--constraint', str(self.constraint), '--qos', str(self.qos), '--time', str(self.time), '--nodes', str(nodes), '--signal', str(self.signal), '--parsable'] + kwargs + ['--wrap', cmd]
+        proc = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.processes.append((proc.stdout.split(',')[0].strip(), nodes, workers))  # jobid, workers
