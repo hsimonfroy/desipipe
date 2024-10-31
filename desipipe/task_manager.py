@@ -1663,11 +1663,18 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
     itask = 0
 
     #mpicomm_all = mpicomm
-    if mpisplits is not None:
+
+    try:
         from mpi4py import MPI
+    except ImportError:
+        MPI = mpicomm = None
+    else:
         if mpicomm is None:
             mpicomm = MPI.COMM_WORLD
 
+    if mpisplits is not None:
+        if mpicomm is None:
+            raise ImportError('mpicomm not defined')
         for isplit in range(mpisplits):
             if (mpicomm.size * isplit // mpisplits) <= mpicomm.rank < (mpicomm.size * (isplit + 1) // mpisplits):
                 color = isplit
