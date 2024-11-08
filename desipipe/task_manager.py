@@ -1656,6 +1656,14 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
     mpisplits : int, default=None
         Split MPI communicator in this number of subcommunicators to run ``mpisplits`` tasks in parallel.
     """
+    killed_at_timeout = None
+
+    queue = get_queue(queue, create=False, one=True)
+    task = None
+    itask = 0
+
+    #mpicomm_all = mpicomm
+
     try:
         from mpi4py import MPI
     except ImportError:
@@ -1664,7 +1672,14 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
         if mpicomm is None:
             mpicomm = MPI.COMM_WORLD
 
-    killed_at_timeout = None
+    if mpisplits is not None:
+        if mpicomm is None:
+            raise ImportError('mpicomm not defined')
+        for isplit in range(mpisplits):
+            if (mpicomm.size * isplit // mpisplits) <= mpicomm.rank < (mpicomm.size * (isplit + 1) // mpisplits):
+                color = isplit
+        mpicomm = mpicomm.Split(color, 0)
+        MPI.COMM_WORLD = mpicomm  # a bit hacky
 
     #ti = time.time()
     def exit_killed(signal_number, stack_frame):
@@ -1686,24 +1701,10 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
         if signal_number == signal.SIGINT:
             exit()
 
-    queue = get_queue(queue, create=False, one=True)
-    task = None
-    itask = 0
-
     #signal.SIGOOM = 253  # slurm out-of-memory
     signal.signal(signal.SIGINT, exit_killed)
     signal.signal(signal.SIGTERM, exit_killed)
     #signal.signal(signal.SIGOOM, exit_killed)
-
-    #mpicomm_all = mpicomm
-    if mpisplits is not None:
-        if mpicomm is None:
-            raise ImportError('mpicomm not defined')
-        for isplit in range(mpisplits):
-            if (mpicomm.size * isplit // mpisplits) <= mpicomm.rank < (mpicomm.size * (isplit + 1) // mpisplits):
-                color = isplit
-        mpicomm = mpicomm.Split(color, 0)
-        MPI.COMM_WORLD = mpicomm  # a bit hacky
 
     global t0, killed
     killed = False
@@ -1761,7 +1762,7 @@ def work(queue, mid=None, tid=None, name=None, provider=None, mode='', mpicomm=N
         if task.kwargs.get('mpicomm', False) is None:
             kwargs['mpicomm'] = mpicomm
         task.callback = callback
-        t0 = time.time() - timestep # for callback
+        t0 = time.time() - timestep  # for callback
         task.run(**kwargs)
         if mpicomm is not None: mpicomm.barrier()
         if mpicomm is None or mpicomm.rank == 0:
