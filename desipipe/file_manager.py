@@ -262,7 +262,10 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
 
         # return path.format(**self.foptions)
         def fstr(template, kwargs):
-            return eval(f"f'{template}'", dict(), kwargs)
+            try:
+                return eval(f"f'{template}'", dict(), kwargs)
+            except NameError as exc:
+                raise ValueError('make sure that all options used in the template path {} are defined in :attr:`options`: {}'.format(self.path, self.options)) from exc
 
         path = fstr(path, self.foptions)
         if '*' in path:
