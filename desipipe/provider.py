@@ -186,7 +186,7 @@ class LocalProvider(BaseProvider):
         for jobid in jobids:
             try:
                 os.kill(int(jobid), signal.SIGTERM)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
 
     def __call__(self, cmd, workers=1):

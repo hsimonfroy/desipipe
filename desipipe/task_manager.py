@@ -915,7 +915,7 @@ class Queue(BaseClass):
     def delete(self, kill=True):
         """Delete data base :attr:`db` from both this instance and the disk (and delete associated jobs)."""
         if kill:
-            globals()['kill'](queue=self, all=True)
+            globals()['kill'](queue=self)
         if hasattr(self, 'db'):
             self.db.close()
             del self.db
@@ -1857,7 +1857,7 @@ def spawn(queue, timeout=3600 * 24, timestep=3., mode='', max_workers=None, spaw
         time.sleep(timestep * random.uniform(0.8, 1.2))
 
 
-def kill(queue=None, all=False, provider=None, jobid=None, state=None, **kwargs):
+def kill(queue=None, provider=None, jobid=None, state=None, **kwargs):
     """
     Kill launched jobs.
 
@@ -1867,19 +1867,15 @@ def kill(queue=None, all=False, provider=None, jobid=None, state=None, **kwargs)
         Queue or list of queues to process.
         If ``None``, ``jobid`` must be provided.
 
-    all : bool, default=False
-        If ``True``, kill all processes registered in this queue.
-
     provider : BaseProvider, str, dict, default=None
         To access :meth:`BaseProvider.kill` method.
         See :func:`get_provider`.
 
     jobid : str, list, default=None
-        IDs of jobs to kill.
+        IDs of jobs to kill, defaults to all.
 
     state : str, default=None
-        State of tasks to kill.
-        If ``jobid`` is not provided, defaults to RUNNING.
+        State of tasks to kill, defaults to all.
 
     **kwargs : dict
         Optional arguments to select tasks in ``queue`` to be killed: tid, mid, name.
@@ -2077,7 +2073,6 @@ def action_from_args(action='work', args=None):
     if action == 'kill':
 
         parser.add_argument('-q', '--queue', nargs='*', type=str, required=False, default=None, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
-        parser.add_argument('--all', action='store_true', help='To kill all processes (manager and worker) associated with the queue')
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--tid', type=str, nargs='*', required=False, default=None, help='Task ID')
         parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
@@ -2085,7 +2080,7 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--provider', type=str, required=False, default=None, help='Provider')
         parser.add_argument('--state', type=str, required=False, default=TaskState.RUNNING, choices=TaskState.ALL, help='Task state')
         args = parser.parse_args(args=args)
-        return kill(queue=args.queue, all=args.all, provider=args.provider, jobid=args.jobid, state=args.state, tid=args.tid, mid=args.mid)
+        return kill(queue=args.queue, provider=args.provider, jobid=args.jobid, state=args.state, tid=args.tid, mid=args.mid)
 
     parser.add_argument('-q', '--queue', nargs='*', type=str, required=True, help='Name of queue; user/queue to select user != {} and e.g. */* to select all queues of all users)'.format(Config.default_user))
 
