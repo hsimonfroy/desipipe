@@ -76,7 +76,7 @@ def test_error():
                    path='tmp.fits',
                    options={'cut': {None: '', ('rp', 2.5): 'rpcut2.5', ('theta', 0.06): 'thetacut0.06'}, 'region': ['NGC']}))
     try:
-        fm.select(cut='rpcut5', empty_error=True)
+        fm.select(cut='rpcut5', region='NGC', empty_error=True)
     except ValueError as exc:
         print(exc)
 
@@ -86,7 +86,7 @@ def test_error():
         print(exc)
 
     try:
-        fm.get(acut='rpcut5', raise_error=True)
+        fm.get(acut='rpcut5', region='NGC', raise_error=True)
     except ValueError as exc:
         print(exc)
 

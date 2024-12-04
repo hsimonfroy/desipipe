@@ -482,7 +482,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
             self.foptions.setdefault(name, values)
         self.foptions = {name: _make_list_options(value) for name, value in self.foptions.items() if name in self.options}
 
-    def select(self, ignore=False, check_exists=False, raise_error=True, _return_matching_score=False, **kwargs):
+    def select(self, ignore=False, check_exists=False, raise_error=True, **kwargs):
         """
         Restrict to input options, e.g.
 
@@ -503,37 +503,24 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
             If ``False`` and an error is raised, catch it and return ``None``.
         """
         options, foptions = self.options.copy(), self.foptions.copy()
-        matching_score, matching_total = 0, 0
-        toret = None
-        return_now = False
         if not ignore in [False, True]: ignore = _make_list(ignore)
         for name, values in kwargs.items():
             if isinstance(ignore, list) and name in ignore: continue
             if name in options:
-                options[name], indices = in_options(values, self.options[name], return_index=True)
-                if raise_error and not options[name]:
-                    raise ValueError('option {} received {} but can only take values {}'.format(name, values, self.options[name]))
-                matching_total += 1
-                matching_score += bool(len(options[name]))
+                options[name], indices = in_options(values, options[name], return_index=True)
                 if indices is Ellipsis:  # Ellipsis
                     foptions[name] = options[name]
                 else:
                     foptions[name] = [foptions[name][index] for index in indices]
             elif not ignore:
-                matching_score = None
-                if raise_error: raise ValueError('unknown option {}, select from {}'.format(name, self.options))
-                return_now = True
-                break
-        if not return_now:
-            matching_score = matching_score / max(matching_total, 1)  # higher it is, better the match is
-            toret = self.clone(options=options, foptions=foptions)
-            if check_exists:
-                exists = toret.exists()
-                if exists[False]:
-                    if raise_error: raise FileNotFoundError('file {} not found.'.format(exists[False]))
-                    toret = None
-        if _return_matching_score:
-            return toret, matching_score
+                if raise_error: raise ValueError('Unknown option {}, select from {}'.format(name, self.options))
+                return None
+        toret = self.clone(options=options, foptions=foptions)
+        if check_exists:
+            exists = toret.exists()
+            if exists[False]:
+                if raise_error: raise FileNotFoundError('file {} not found.'.format(exists[False]))
+                return None
         return toret
 
     def get(self, *args, raise_error=True, **kwargs):
@@ -812,6 +799,9 @@ class FileEntryCollection(BaseClass):
             for the corresponding file entry to be selected.
             e.g. ``['power cutsky', 'fiber']`` selects the data base entries whose description contains 'power' and 'cutsky' or 'fiber'.
 
+        empty_error : bool, default=False
+            If ``True``, return (hopefully meaningful) error if no match is found.
+
         **kwargs : dict
             Restrict to these options, see :meth:`BaseFileEntry.select`.
 
@@ -829,7 +819,7 @@ class FileEntryCollection(BaseClass):
             keywords = _make_list_options(keywords)
             keywords = [keyword.lower().split() for keyword in keywords]
         indices, entries = [], []
-        not_id, not_filetype, not_keywords, scores = True, True, True, []
+        not_id, not_filetype, not_keywords, sentries = True, True, True, []
         for ientry, entry in enumerate(self.data):
             if id is not None and entry.id.lower() not in id:
                 continue
@@ -842,13 +832,15 @@ class FileEntryCollection(BaseClass):
                 if not any(all(kw in description for kw in keyword) for keyword in keywords):
                     continue
             not_keywords = False
-            sentry, score = entry.select(ignore=ignore, check_exists=False, _return_matching_score=True, raise_error=False, **kwargs)
+            sentry = entry.select(ignore=ignore, check_exists=False, raise_error=False, **kwargs)
             if sentry is None or not sentry:
-                scores.append((entry, score))
+                sentries.append((entry, sentry))
                 continue
             indices.append(ientry)
             entries.append(sentry)
         if not indices and empty_error:
+            if not self.data:
+                raise ValueError('file collection is empty')
             import warnings
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
@@ -866,15 +858,15 @@ class FileEntryCollection(BaseClass):
                         raise ValueError('keywords {} not found, maybe you meant {}?'.format(keywords, [[tmp[0] for tmp in process.extract(_, [entry.description.lower() for entry in self.data], limit=limit)] for _ in keywords]))
             if not len(self):
                 raise ValueError('{} is empty'.format(self.__class__.__name__))
-            nomatch = [score for score in scores if score[1] is None]
-            scores = [score for score in scores if score[1] is not None]
-            if not any(scores):
-                raise ValueError('options {} not found in any entry. Note that you can pass ignore=True to ignore input input options that cannot be found in any file entry'.format(kwargs))
-            scores = sorted(scores, key=lambda x: x[1], reverse=True)
-            error = 'option values {} not found, best matching entries are {}'.format(kwargs, [score[0] for score in scores[:limit]])
-            if nomatch:
-                error += '. Note that you can pass ignore=True to ignore input input options that cannot be found in a file entry.'
-            raise ValueError(error)
+            values_not_found = [(entry, sentry) for entry, sentry in sentries if sentry is not None]
+            if not values_not_found:
+                options_not_found = [(entry, set(kwargs) - set(entry.options)) for entry, sentry in sentries if sentry is None]
+                options_not_found = sorted(options_not_found, key=lambda x: len(x[1]), reverse=False)
+                options_never_found = set.union(*[opt for _, opt in options_not_found])
+                raise ValueError('options {} not found in any entry, best matching entries are {}. Note that you can pass ignore=True to ignore input options that cannot be found in any file entry'.format(options_never_found, [entry for entry, _ in options_not_found[:limit]]))
+            values_not_found = sorted(values_not_found, key=lambda x: sum(bool(values) for values in x[1].options.values()), reverse=True)
+            values_never_found = {name: value for name, value in kwargs.items() if not all(bool(sentry.options[name]) for _, sentry in values_not_found)}
+            raise ValueError('option values {} not found, best matching entries are {}'.format(values_never_found, [entry for entry, _ in values_not_found[:limit]]))
 
         if return_entry:
             return indices, entries
@@ -907,12 +899,15 @@ class FileEntryCollection(BaseClass):
             for the corresponding file entry to be selected.
             e.g. ``['power cutsky', 'fiber']`` selects the data base entries whose description contains 'power' and 'cutsky' or 'fiber'.
 
-        **kwargs : dict
-            Restrict to these options, see :meth:`BaseFileEntry.select`.
+        empty_error : bool, default=False
+            If ``True``, return (hopefully meaningful) error if no match is found.
 
         ignore : bool, list, default=False
             If ``True``, also keep file entries that do not take the input options.
             If list, do not cut file entries to these input options.
+
+        **kwargs : dict
+            Restrict to these options, see :meth:`BaseFileEntry.select`.
 
         Returns
         -------
