@@ -863,10 +863,12 @@ class FileEntryCollection(BaseClass):
                 options_not_found = [(entry, set(kwargs) - set(entry.options)) for entry, sentry in sentries if sentry is None]
                 options_not_found = sorted(options_not_found, key=lambda x: len(x[1]), reverse=False)
                 options_never_found = set.union(*[opt for _, opt in options_not_found])
-                raise ValueError('options {} not found in any entry, best matching entries are {}. Note that you can pass ignore=True to ignore input options that cannot be found in any file entry'.format(options_never_found, [entry for entry, _ in options_not_found[:limit]]))
+                best_entries = [entry for entry, _ in options_not_found[:limit]]
+                raise ValueError('options {} not found in any entry, best matching entries are {}. Note that you can pass ignore=True to ignore input options that cannot be found in any file entry'.format(options_never_found, best_entries))
             values_not_found = sorted(values_not_found, key=lambda x: sum(bool(values) for values in x[1].options.values()), reverse=True)
             values_never_found = {name: value for name, value in kwargs.items() if not all(bool(sentry.options[name]) for _, sentry in values_not_found)}
-            raise ValueError('option values {} not found, best matching entries are {}'.format(values_never_found, [entry for entry, _ in values_not_found[:limit]]))
+            best_entries = [entry for entry, _ in values_not_found[:limit]]
+            raise ValueError('option values {} not found, best matching entries are {}'.format(values_never_found, best_entries))
 
         if return_entry:
             return indices, entries
