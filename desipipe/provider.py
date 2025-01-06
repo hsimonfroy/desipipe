@@ -383,7 +383,7 @@ class SlurmProvider(BaseProvider):
                     jobid = line.split()[0].strip()
                     if 'RUNNING' in states and state == 'RUNNING':
                         jobids.append(jobid)
-                    elif 'PENDING' in states and state in ('PENDING', 'REQUEUED', 'RESIZING', 'REVOKED', 'SUSPENDED'): # https://slurm.schedmd.com/sacct.html#SECTION_JOB-STATE-CODES
+                    elif 'PENDING' in states and state in ('PENDING', 'REQUEUED', 'RESIZING', 'REVOKED', 'SUSPENDED', 'PENDING+', 'REQUEUED+', 'RESIZING+', 'REVOKED+', 'SUSPENDED+'): # https://slurm.schedmd.com/sacct.html#SECTION_JOB-STATE-CODES
                         jobids.append(jobid)
             self._jobids = jobids = [jobid[0] for jobid in self.processes if jobid[0] in jobids]
         if return_nworkers:
