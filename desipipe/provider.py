@@ -315,7 +315,7 @@ class SlurmProvider(BaseProvider):
             if not user:
                 import getpass
                 user = getpass.getuser()
-            self.sqs = ['squeue', '-u', user]
+            self.sqs = ['sacct', '-u', user, '-X', '-b']
         else:
             if isinstance(self.sqs, str):
                 self.sqs = split(self.sqs)
@@ -376,15 +376,14 @@ class SlurmProvider(BaseProvider):
         except subprocess.CalledProcessError:
             jobids = getattr(self, '_jobids', [])
         else:
-            istate = sqs[0].index('ST')
             jobids = []
-            for line in sqs[1:]:
+            for line in sqs[2:]:
                 if line:
-                    state = line[istate:].split()[0].strip()
+                    state = line.split()[1].strip()
                     jobid = line.split()[0].strip()
-                    if 'RUNNING' in states and state == 'R':
+                    if 'RUNNING' in states and state == 'RUNNING':
                         jobids.append(jobid)
-                    elif 'PENDING' in states and state not in ('GC', 'R'):
+                    elif 'PENDING' in states and state in ('PENDING', 'REQUEUED', 'RESIZING', 'REVOKED', 'SUSPENDED'): # https://slurm.schedmd.com/sacct.html#SECTION_JOB-STATE-CODES
                         jobids.append(jobid)
             self._jobids = jobids = [jobid[0] for jobid in self.processes if jobid[0] in jobids]
         if return_nworkers:
