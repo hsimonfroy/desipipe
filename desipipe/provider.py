@@ -96,6 +96,9 @@ class BaseProvider(BaseClass, metaclass=RegisteredProvider):
             else:
                 raise ValueError('Unknown argument {}; supports {}'.format(name, list(self._defaults)))
 
+    def __setstate__(self, state):
+        self.__dict__.update(self._defaults | state)
+
     def clear(self):
         """Clear, i.e. delete information (typically job IDs) from current run."""
         pass

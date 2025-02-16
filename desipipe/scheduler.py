@@ -1,4 +1,5 @@
 import copy
+import time
 from .utils import BaseClass
 
 
@@ -54,6 +55,9 @@ class BaseScheduler(BaseClass, metaclass=RegisteredScheduler):
         """Schedule input command ``cmd``."""
         raise NotImplementedError
 
+    def __setstate__(self, state):
+        self.__dict__.update(self._defaults | state)
+
 
 def get_scheduler(scheduler=None, **kwargs):
     """
@@ -99,21 +103,20 @@ class SimpleScheduler(BaseScheduler):
         Maximum number of workers.
     """
     name = 'simple'
-    _defaults = dict(max_workers=1)
+    _defaults = dict(max_workers=1, timestep=2, timeout=120)
 
     def __call__(self, cmd, ntasks=None):
         if ntasks is None: ntasks = self.max_workers
-        #print('BEFORE', ntasks)
         npending = self.provider.nworkers(state='PENDING')
         nremaining = ntasks - npending  # remaining tasks to be launched
-        #print('AFTER', ntasks, npending, self.max_workers)
+        #print('tasks, pending, remaining', ntasks, npending, nremaining)
         if nremaining == 0:
             return 0
-        # Too many jobs launched, let's kill some
+        # Too many jobs can be launched because the list of PENDING jobs (provided by provider.nworkers(state='PENDING')) may take some time to refresh fully
         if nremaining < 0:
             nkill = 0
             tokill = []
-            for jobid, nworkers in list(self.provider.jobids(state='PENDING', return_nworkers=True))[::-1]:  # start from newest
+            for jobid, nworkers in list(self.provider.jobids(state='PENDING', return_nworkers=True))[::-1]:  # start from most recent
                 if nkill + nworkers <= abs(nremaining) and jobid is not None:
                     tokill.append(jobid)
                     nkill += nworkers
@@ -122,6 +125,7 @@ class SimpleScheduler(BaseScheduler):
 
         max_remaining_workers = self.max_workers - self.provider.nworkers()
         spawn_workers = 0
+        jobids = self.provider.jobids(state=('PENDING', 'RUNNING'))
         while max_remaining_workers >= spawn_workers:
             ndiff = min(nremaining, max_remaining_workers) - spawn_workers
             if ndiff <= 0: break
@@ -132,4 +136,11 @@ class SimpleScheduler(BaseScheduler):
                     best_workers, best_cost = best, cost
             self.provider(cmd, workers=best_workers)
             spawn_workers += best_workers
+        # Let's wait a bit for the list of PENDING jobs to be (at least partially) refreshed
+        t0 = time.time()
+        while self.provider.jobids(state=('PENDING', 'RUNNING')) == jobids:
+            #print('waiting', jobids)
+            if time.time() - t0 > self.timeout:
+                raise TimeoutError('provider {} list of PENDING/RUNNING tasks has not been updated in {} seconds. Fix this and respawn the queue'.format(self.provider, self.timeout))
+            time.sleep(self.timestep)
         return spawn_workers

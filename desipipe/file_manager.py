@@ -93,6 +93,9 @@ class BaseMutableClass(BaseClass):
             else:
                 raise ValueError('unknown argument {}; supports {}'.format(name, list(self._defaults)))
 
+    def __setstate__(self, state):
+        self.__dict__.update(self._defaults | state)
+
     def deepcopy(self):
         """Return a deep copy."""
         new = self.copy()
@@ -111,7 +114,7 @@ class BaseMutableClass(BaseClass):
         return dict(self.__dict__)
 
     def __setstate__(self, state):
-        self.__dict__.update(state)
+        self.__dict__.update(self._defaults | state)
 
 
 def _deep_eq(obj1, obj2):
