@@ -55,17 +55,27 @@ def test_file_manager():
     file = BaseFile(path='test.fits')
     assert file.filepath
 
+    from pathlib import Path
+
+    base_dir = Path('_tests_fm/')
     fm = FileManager()
     fm.append(dict(description='Y1 data catalogs',
                    id='catalog_data_y1',
                    filetype='catalog',
-                   path='tmp.fits',
+                   path=base_dir / 'tmp.fits',
                    options={'cut': {None: '', ('rp', 2.5): 'rpcut2.5', ('theta', 0.06): 'thetacut0.06'}, 'region': ['NGC']}))
     assert fm.select(cut=[None])
     assert fm.select(cut=[('theta', 0.06)])
     assert fm.select(cut=('theta', 0.06))
     fi = fm.get(cut=[None])
-    print(fi, fi.clone(path='tmp_{region}.fits', options=fi.options | {'region': 'S'}))
+    fi2 = fi.clone(path=base_dir / 'tmp_{region}.fits', options=fi.options | {'region': 'S'})
+    print(fi, fi2)
+    fm.chgdir('_tests_fm2')
+    for fi in fm:
+        assert str(fi).startswith('_tests_fm2')
+    fi2 = fi.clone(path=base_dir / 'tmp_{region}.fits', ro=('_test_fm2', 'ro/fm2'), options=fi.options | {'region': 'S'})
+    assert 'ro' in fi2.ro[1]
+    fi2.__setstate__(fi.__getstate__())
 
 
 def test_error():

@@ -86,7 +86,10 @@ class BaseMutableClass(BaseClass):
         """Update input attributes."""
         for name, value in kwargs.items():
             if name in self._defaults:
-                setattr(self, name, type(self._defaults[name])(value))
+                default = self._defaults[name]
+                if default is not None:
+                    value = type(default)(value)
+                setattr(self, name, value)
             else:
                 raise ValueError('unknown argument {}; supports {}'.format(name, list(self._defaults)))
 
@@ -216,6 +219,17 @@ def path_replace_environ(path, environ=None):
 class JointMetaClass(type(os.PathLike), type(BaseClass)): pass
 
 
+
+def _find_basedir(path):
+    index = re.match("\{[^{}]*\}", path)
+    if index is not None: index = index.start(0)
+    else: index = None
+    olddir = path[:index]
+    if not olddir.endswith(os.sep):
+        olddir = os.path.dirname(olddir)
+    return olddir
+
+
 class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     """
     Class describing a single file (single :attr:`options` values).
@@ -244,7 +258,7 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     link : str, default=''
         Symlink.
     """
-    _defaults = dict(path='', filetype='generic', id='', author='', options=dict(), foptions=dict(), description='', link='')
+    _defaults = dict(path='', ro=None, filetype='generic', id='', author='', options=dict(), foptions=dict(), description='', link='')
 
     def update(self, **kwargs):
         """Update input attributes."""
@@ -283,6 +297,8 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     def load(self, *args, **kwargs):
         """Load file from disk."""
         filepath = self.__fspath__()
+        if self.ro is not None:
+            filepath = filepath.replace(*self.ro)
         self.log_info('Loading {}'.format(filepath))
         return get_filetype(filetype=self.filetype, path=filepath).load(*args, **kwargs)
 
@@ -353,6 +369,7 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         di['filepath'] = self.__fspath__()
         if self.link: di['symlink'] = self._resolve_path(self.link)
         di.pop('foptions')
+        if self.ro is None: di.pop('ro')
         #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
 
@@ -413,6 +430,18 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
         """Equivalent of :meth:`extname`, following https://docs.python.org/fr/3/library/pathlib.html."""
         return self.extname()
 
+    def chgdir(self, newdir, olddir=None):
+        """
+        Change directory for new one in :attr:`path`.
+        As a default, ``olddir`` (directory to be replaced) is taken to be
+        the top directory which does not contain replacement options.
+        """
+        path = self.path
+        if olddir is None:
+            olddir = _find_basedir(path)
+        path = os.path.join(newdir, os.path.relpath(path, olddir))
+        self.update(path=path)
+
 
 class RegisteredFileEntry(type(BaseMutableClass)):
 
@@ -457,7 +486,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         Symlink.
     """
     name = 'base'
-    _defaults = dict(path='', filetype='generic', id='', author='', options=dict(), foptions=dict(), description='', link='')
+    _defaults = dict(path='', ro=None, filetype='generic', id='', author='', options=dict(), foptions=dict(), description='', link='')
     _file_cls = BaseFile
 
     def update(self, **kwargs):
@@ -639,6 +668,7 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
         """String representation: class name and attributes."""
         di = self.to_dict()
         di.pop('foptions', None)
+        if self.ro is None: di.pop('ro')
         #return '{}({})'.format(self.__class__.__name__, ', '.join(['{}={}'.format(name, value) for name, value in di.items()]))
         return '{}(\n{}\n)'.format(self.__class__.__name__, ',\n'.join(['{}: {}'.format(name, value) for name, value in di.items()]))
 
@@ -678,6 +708,8 @@ class BaseFileEntry(BaseMutableClass, metaclass=RegisteredFileEntry):
                 toret += filepaths
             return '\n'.join(toret)
         raise ValueError('unknown return_type {}'.format(return_type))
+
+    chgdir = BaseFile.chgdir
 
 
 def get_file_entry(file_entry=None, file_entry_collection=None, **kwargs):
@@ -1035,6 +1067,10 @@ class FileEntryCollection(BaseClass):
             environ = kwargs.pop('environ')
             for entry in self.data:
                 entry.environ = environ
+        if 'ro' in kwargs:
+            ro = kwargs.pop('ro')
+            for entry in self.data:
+                entry.update(ro=ro)
         if kwargs:
             raise ValueError('unrecognized arguments {}'.format(kwargs))
 
@@ -1100,6 +1136,18 @@ class FileEntryCollection(BaseClass):
                 toret += filepaths
             return '\n'.join(toret)
         raise ValueError('unknown return_type {}'.format(return_type))
+
+    def chgdir(self, newdir, olddir=None):
+        """
+        Change directory for new one in :attr:`path`.
+        As a default, ``olddir`` (directory to be replaced) is taken to be
+        the common directory to all entries that does not contain replacement options.
+        """
+        if olddir is None:
+            path = os.path.commonpath([entry.path for entry in self.data])
+            olddir = _find_basedir(path)
+        for entry in self.data:
+            entry.chgdir(newdir, olddir=olddir)
 
 
 def common_options(list_options, intersection=True):
