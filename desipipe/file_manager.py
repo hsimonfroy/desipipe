@@ -299,9 +299,7 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
 
     def load(self, *args, **kwargs):
         """Load file from disk."""
-        filepath = self.__fspath__()
-        if self.ro is not None:
-            filepath = filepath.replace(*self.ro)
+        filepath = self.filepathro
         self.log_info('Loading {}'.format(filepath))
         return get_filetype(filetype=self.filetype, path=filepath).load(*args, **kwargs)
 
@@ -352,6 +350,13 @@ class BaseFile(BaseMutableClass, os.PathLike, metaclass=JointMetaClass):
     @property
     def filepath(self):
         return self.__fspath__()
+
+    @property
+    def filepathro(self):
+        filepath = self.__fspath__()
+        if self.ro is not None:
+            filepath = filepath.replace(*map(self._resolve_path, self.ro))
+        return filepath
 
     @property
     def sympath(self):
@@ -901,7 +906,7 @@ class FileEntryCollection(BaseClass):
                 best_entries = [entry for entry, _ in options_not_found[:limit]]
                 raise ValueError('options {} not found in any entry, best matching entries are {}. Note that you can pass ignore=True to ignore input options that cannot be found in any file entry'.format(options_never_found, best_entries))
             values_not_found = sorted(values_not_found, key=lambda x: sum(bool(values) for values in x[1].options.values()), reverse=True)
-            values_never_found = {name: value for name, value in kwargs.items() if not all(bool(sentry.options[name]) for _, sentry in values_not_found)}
+            values_never_found = {name: value for name, value in kwargs.items() if not all(bool(sentry.options.get(name, [])) for _, sentry in values_not_found)}
             best_entries = [entry for entry, _ in values_not_found[:limit]]
             raise ValueError('option values {} not found, best matching entries are {}'.format(values_never_found, best_entries))
 
