@@ -137,10 +137,11 @@ class SimpleScheduler(BaseScheduler):
             self.provider(cmd, workers=best_workers)
             spawn_workers += best_workers
         # Let's wait a bit for the list of PENDING jobs to be (at least partially) refreshed
-        t0 = time.time()
-        while self.provider.jobids(state=('PENDING', 'RUNNING')) == jobids:
-            #print('waiting', jobids)
-            if time.time() - t0 > self.timeout:
-                raise TimeoutError('provider {} list of PENDING/RUNNING tasks has not been updated in {} seconds. Fix this and respawn the queue'.format(self.provider, self.timeout))
-            time.sleep(self.timestep)
+        if spawn_workers:
+            t0 = time.time()
+            while self.provider.jobids(state=('PENDING', 'RUNNING')) == jobids:
+                #print('waiting', jobids)
+                if time.time() - t0 > self.timeout:
+                    raise TimeoutError('provider {} list of PENDING/RUNNING tasks has not been updated in {} seconds. Fix this and respawn the queue'.format(self.provider, self.timeout))
+                time.sleep(self.timestep)
         return spawn_workers
