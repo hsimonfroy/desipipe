@@ -2019,7 +2019,7 @@ def action_from_args(action='work', args=None):
         parser.add_argument('--mid', type=str, required=False, default=None, help='Task manager ID')
         parser.add_argument('--tid', type=str, required=False, default=None, help='Task ID')
         parser.add_argument('--name', type=str, required=False, default=None, help='Task name')
-        parser.add_argument('--mode', nargs='*', type=str, required=False, default=None, help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
+        parser.add_argument('--mode', nargs='*', type=str, required=False, default=tuple(), help='Processing mode; "stop_at_error" to stop as soon as a task is failed')
         parser.add_argument('--mpisplits', type=int, required=False, default=None, help='Number of MPI splits')
         args = parser.parse_args(args=args)
         return work(args.queue, mid=args.mid, tid=args.tid, name=args.name, mode=' '.join(args.mode), mpisplits=args.mpisplits)
